@@ -1,0 +1,300 @@
+import {
+  ChatInputCommandInteraction,
+  ButtonInteraction,
+  ModalSubmitInteraction,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
+  EmbedBuilder
+} from 'discord.js';
+import {
+  verifyApplicationEmail,
+  addApprovedApplication,
+  revokeApprovedApplication,
+  restoreApprovedApplication,
+  getMembership,
+  addResume,
+  removeResume,
+  completeOnboardingStep,
+  activateMembership,
+  suspendMembership,
+  restoreMembership,
+  terminateMembership,
+  getResumeHistory
+} from '../services/sharedServices.ts';
+import { runReconciliationScan, executeSafeRepair } from '../services/reconciliationService.ts';
+import { dbManager } from '../database/index.ts';
+import {
+  buildEmailVerifiedCard,
+  buildWelcomeEmpireCard,
+  buildProfileManagerCard,
+  JEMP_COLORS,
+  JEMP_FOOTER
+} from './embeds.ts';
+import { maskEmail } from '../security/index.ts';
+import { OnboardingStep } from '../types.ts';
+
+// 1. BUTTON INTERACTIONS
+export async function handleButtonInteraction(interaction: ButtonInteraction) {
+  const customId = interaction.customId;
+
+  if (customId === 'btn_verify_email') {
+    // Open private modal
+    const modal = new ModalBuilder()
+      .setCustomId('modal_verify_email')
+      .setTitle('Jobless Empire Identity Verification');
+
+    const emailInput = new TextInputBuilder()
+      .setCustomId('input_application_email')
+      .setLabel('Email used for your application')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('name@domain.com')
+      .setRequired(true)
+      .setMaxLength(255);
+
+    const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(emailInput);
+    modal.addComponents(firstActionRow);
+
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (customId === 'btn_how_it_works') {
+    await interaction.reply({
+      ephemeral: true,
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('⚔️ HOW JOBLESS EMPIRE ONBOARDING WORKS')
+          .setDescription(
+            '**1. Website Application**\nSubmit your work history and background at despair.us.\n\n' +
+            '**2. Admin Review & Whitelist**\nAdmins review and approve qualified builders.\n\n' +
+            '**3. Discord Identity Verification**\nVerify the email submitted with your approved application.\n\n' +
+            '**4. Resume Upload & Storage**\nAfter email verification, securely upload your current resume.\n\n' +
+            '**5. Rules & Identity**\nAgree to community standards, confirm your timezone, and receive your permanent JEMP# proof-of-work identifier.'
+          )
+          .setColor(JEMP_COLORS.CANVAS_BLACK)
+          .setFooter(JEMP_FOOTER)
+      ]
+    });
+    return;
+  }
+
+  if (customId === 'btn_view_profile') {
+    const { member, resume } = await getMembership(interaction.user.id);
+    if (!member) {
+      await interaction.reply({
+        ephemeral: true,
+        content: 'No Jobless Empire profile found for this Discord account. Please complete verification in #verify-me.'
+      });
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`⚔️ MEMBER PROFILE — ${member.jempId || 'ONBOARDING'}`)
+      .addFields(
+        { name: 'Member Name', value: member.name, inline: true },
+        { name: 'Permanent JEMP#', value: member.jempId ? `\`${member.jempId}\`` : 'Pending Activation', inline: true },
+        { name: 'Status', value: `\`${member.membershipStatus}\``, inline: true },
+        { name: 'Timezone', value: member.timezone || 'Not set', inline: true },
+        { name: 'Current Resume', value: resume ? `v${resume.version} (${resume.filename})` : 'None active', inline: true },
+        { name: 'Rules Accepted', value: member.rulesAcceptedAt ? `✓ (${member.rulesVersionAccepted})` : 'Pending', inline: true }
+      )
+      .setColor(JEMP_COLORS.GOLD_HONOR)
+      .setFooter(JEMP_FOOTER);
+
+    await interaction.reply({ ephemeral: true, embeds: [embed] });
+    return;
+  }
+
+  if (customId === 'btn_resume_history') {
+    const { member } = await getMembership(interaction.user.id);
+    if (!member) {
+      await interaction.reply({ ephemeral: true, content: 'Member profile not found.' });
+      return;
+    }
+    const history = await getResumeHistory(member.id);
+    if (history.length === 0) {
+      await interaction.reply({ ephemeral: true, content: 'No resume history found on record.' });
+      return;
+    }
+
+    const description = history
+      .map(
+        h =>
+          `• **v${h.version}** — \`${h.status}\` — ${h.filename} (${Math.round(h.fileSize / 1024)} KB)\n` +
+          `  *Uploaded: ${new Date(h.uploadedAt).toLocaleDateString()} | SHA-256: \`${h.sha256Hash.substring(0, 12)}...\`*`
+      )
+      .join('\n\n');
+
+    const embed = new EmbedBuilder()
+      .setTitle('🗂️ RESUME REVISION HISTORY')
+      .setDescription(description)
+      .setColor(JEMP_COLORS.CANVAS_BLACK)
+      .setFooter(JEMP_FOOTER);
+
+    await interaction.reply({ ephemeral: true, embeds: [embed] });
+    return;
+  }
+
+  if (customId === 'btn_remove_resume') {
+    const res = await removeResume(interaction.user.id);
+    if (!res.success) {
+      await interaction.reply({ ephemeral: true, content: res.error || 'Failed to remove resume.' });
+      return;
+    }
+    await interaction.reply({
+      ephemeral: true,
+      content: `✓ Current resume (v${res.removedVersion}) has been archived and removed from your active profile. You may upload a new resume at any time.`
+    });
+    return;
+  }
+}
+
+// 2. MODAL SUBMISSIONS
+export async function handleModalSubmission(interaction: ModalSubmitInteraction) {
+  if (interaction.customId === 'modal_verify_email') {
+    const rawEmail = interaction.fields.getTextInputValue('input_application_email');
+    await interaction.deferReply({ ephemeral: true });
+
+    const result = await verifyApplicationEmail(interaction.user.id, rawEmail);
+    if (!result.success) {
+      await interaction.editReply({ content: result.error });
+      return;
+    }
+
+    // Success! Show Verified card with Resume upload instructions
+    const card = buildEmailVerifiedCard();
+    await interaction.editReply({
+      content: '✓ **Identity confirmed against approved application whitelist.**',
+      embeds: card.embeds,
+      components: card.components
+    });
+  }
+}
+
+// 3. SLASH COMMANDS
+export async function handleChatCommand(interaction: ChatInputCommandInteraction) {
+  const { commandName } = interaction;
+
+  if (commandName === 'onboard') {
+    const subcommand = interaction.options.getSubcommand();
+
+    if (subcommand === 'add') {
+      const email = interaction.options.getString('email', true);
+      const name = interaction.options.getString('applicant_name', true);
+      const appId = interaction.options.getString('application_id', true);
+      const notes = interaction.options.getString('notes') || undefined;
+      const expiration = interaction.options.getString('expiration') || undefined;
+
+      const res = await addApprovedApplication(interaction.user.tag, {
+        applicationId: appId,
+        applicantName: name,
+        email,
+        notes,
+        expiration
+      });
+
+      if (!res.success) {
+        await interaction.reply({ ephemeral: true, content: `Error: ${res.error}` });
+        return;
+      }
+
+      await interaction.reply({
+        ephemeral: true,
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('✓ APPLICANT WHITELISTED')
+            .setDescription(
+              `Application **${appId}** for **${name}** has been approved for Discord onboarding.\n\n` +
+              `• Email: \`${maskEmail(email)}\`\n` +
+              `• Status: \`APPROVED\`\n` +
+              `• Whitelisted By: ${interaction.user.tag}`
+            )
+            .setColor(JEMP_COLORS.GOLD_HONOR)
+            .setFooter(JEMP_FOOTER)
+        ]
+      });
+      return;
+    }
+
+    if (subcommand === 'reconcile') {
+      await interaction.deferReply({ ephemeral: true });
+      const report = await runReconciliationScan();
+
+      const embed = new EmbedBuilder()
+        .setTitle('⚔️ RECONCILIATION SCAN REPORT')
+        .setDescription(
+          `**Members Scanned:** ${report.totalMembersChecked}\n` +
+          `**Anomalies Found:** ${report.anomaliesFound}\n\n` +
+          (report.anomalies.length > 0
+            ? report.anomalies.map(a => `• **[${a.severity}]** ${a.description}\n  *Suggested Fix: ${a.suggestedFix}*`).join('\n')
+            : '✓ All records synchronized. Database, JEMP# sequences, and Timeline events are fully consistent.')
+        )
+        .setColor(report.anomaliesFound > 0 ? JEMP_COLORS.CRIMSON_ALERT : JEMP_COLORS.GOLD_HONOR)
+        .setFooter(JEMP_FOOTER);
+
+      await interaction.editReply({ embeds: [embed] });
+      return;
+    }
+
+    if (subcommand === 'dashboard') {
+      const status = dbManager.getStatus();
+      const apps = await dbManager.listApplications();
+      const approvedCount = apps.filter(a => a.status === 'APPROVED').length;
+      const pendingCount = apps.filter(a => a.status === 'PENDING').length;
+
+      const embed = new EmbedBuilder()
+        .setTitle('⚔️ JOBLESS EMPIRE ONBOARDING DASHBOARD')
+        .addFields(
+          { name: 'System of Record', value: status.type, inline: true },
+          { name: 'Total Members', value: String(status.membersCount), inline: true },
+          { name: 'Last Allocated JEMP#', value: `JEMP#${String(status.currentJempSequence).padStart(3, '0')}`, inline: true },
+          { name: 'Approved Whitelist', value: String(approvedCount), inline: true },
+          { name: 'Pending Applications', value: String(pendingCount), inline: true },
+          { name: 'Resumes Stored', value: String(status.resumesCount), inline: true },
+          { name: 'Timeline Events', value: String(status.timelineEventsCount), inline: true },
+          { name: 'Audit Entries', value: String(status.auditLogsCount), inline: true }
+        )
+        .setColor(JEMP_COLORS.CANVAS_BLACK)
+        .setFooter(JEMP_FOOTER);
+
+      await interaction.reply({ ephemeral: true, embeds: [embed] });
+      return;
+    }
+
+    if (subcommand === 'seed-demo') {
+      await dbManager.seedDemoData();
+      await interaction.reply({
+        ephemeral: true,
+        content: '✓ Demo data seeded: APP#DEMO-001 (alex), APP#DEMO-002 (samantha), APP#DEMO-003 (marcus), and JEMP#001 (elena).'
+      });
+      return;
+    }
+
+    if (subcommand === 'clear-demo') {
+      await dbManager.clearDemoData();
+      await interaction.reply({
+        ephemeral: true,
+        content: '✓ All demo records successfully cleared from the database.'
+      });
+      return;
+    }
+  }
+
+  if (commandName === 'membership') {
+    const { member } = await getMembership(interaction.user.id);
+    if (!member) {
+      await interaction.reply({
+        ephemeral: true,
+        content: 'No membership record found. Visit #verify-me to begin onboarding.'
+      });
+      return;
+    }
+
+    await interaction.reply({
+      ephemeral: true,
+      content: `Your membership identity: **${member.jempId || 'Onboarding'}** | Status: **${member.membershipStatus}**`
+    });
+  }
+}

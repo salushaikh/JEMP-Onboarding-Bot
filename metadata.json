@@ -1,0 +1,6 @@
+{
+  "name": "Jobless Empire — Onboarding & Membership Bot",
+  "description": "Production-grade Discord Onboarding and Membership Bot, Identity Gateway, Resume Manager, and Proof-of-Work ecosystem controller for Jobless Empire.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
