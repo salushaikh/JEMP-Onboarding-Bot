@@ -111,29 +111,147 @@ Discord security rules state that a bot **cannot give a role that is higher than
 
 ---
 
-## 5. RUNNING THE BOT
+## 5. RUNNING LOCALLY ON WINDOWS USING DOCKER & POSTGRESQL
 
-### Quick Start (Local Machine)
-```bash
-# 1. Install dependencies
-npm install
+This is the recommended setup for running the Onboarding Bot and the shared PostgreSQL database together on your Windows laptop.
 
-# 2. Copy the example environment file
-cp .env.example .env
+### Prerequisites for Windows
+1. **Install Docker Desktop for Windows**:
+   - Download from [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop).
+   - During installation, make sure **"Use WSL 2 instead of Hyper-V"** is checked (default on modern Windows 10/11).
+   - Once installed, launch **Docker Desktop** and wait until the whale icon in your system tray indicates "Docker Desktop is running".
 
-# 3. Edit .env with your DISCORD_TOKEN and DISCORD_CLIENT_ID
-# (You can use any text editor, nano, or VS Code)
+---
 
-# 4. Start the application (runs bot and web control panel)
-npm run dev
+### Step 1: Open Terminal in the Project Folder
+Open **PowerShell**, **Windows Terminal**, or **Command Prompt** (CMD) and navigate into your project directory:
+```powershell
+cd C:\path\to\your\jobless-empire-onboarding-bot
 ```
-Open your browser at `http://localhost:3000` to access the full control dashboard, run test suites, inspect database rows, and download resumes.
 
-### Production Build & Launch
-```bash
-npm run build
-npm start
+### Step 2: Configure Your `.env` File
+Copy `.env.example` to `.env`:
+```powershell
+copy .env.example .env
 ```
+Open `.env` in Notepad or VS Code:
+```powershell
+notepad .env
+```
+Fill in your credentials:
+```env
+# 1. Your Discord Bot credentials
+DISCORD_TOKEN=your_bot_token_from_step_3
+DISCORD_CLIENT_ID=your_application_id_from_step_2
+DISCORD_GUILD_ID=your_server_id
+
+# 2. Database Password (defaults to jemp_secret_password_2026)
+DB_PASSWORD=jemp_secret_password_2026
+```
+*(Save and close the file).*
+
+---
+
+### Step 3: Launch PostgreSQL & Bot via Docker Compose
+Run the following single command in PowerShell:
+```powershell
+docker compose up -d --build
+```
+> *Note: If you have an older version of Docker, use `docker-compose up -d --build`.*
+
+**What this does automatically:**
+1. Spawns an official `postgres:16-alpine` database container named `jemp-postgres`.
+2. Automatically creates the database `jobless_empire` and user `postgres`.
+3. Auto-executes `src/database/schema.sql` to pre-create all canonical tables (`applications`, `members`, `onboarding_sessions`, `resume_files`, `timeline_events`, `outbox_events`, `audit_log`, `settings`, sequence `jemp_member_seq`, and `uuid-ossp` extension).
+4. Persists your database to a Windows volume (`jemp_postgres_data`) so data is never lost when restarting.
+5. Builds and launches the Node.js application container named `jemp-onboarding-bot`, waits for Postgres to pass healthchecks, and connects over the private `jemp_shared_network`!
+
+---
+
+### Step 4: Verify Both Containers Are Running
+Check container status:
+```powershell
+docker compose ps
+```
+You should see:
+* `jemp-postgres` &rarr; `Up (healthy)` on port `0.0.0.0:5432->5432/tcp`
+* `jemp-onboarding-bot` &rarr; `Up` on port `0.0.0.0:3000->3000/tcp`
+
+View real-time logs:
+```powershell
+docker compose logs -f onboarding-bot
+```
+
+---
+
+### Step 5: Access the Web Control Panel
+Open your browser on Windows:
+👉 **[http://localhost:3000](http://localhost:3000)**
+
+In the dashboard:
+* Navigate to **System of Record (Local DB)** tab &rarr; you will see **"Canonical PostgreSQL Database (Active Shared System)"** connected!
+* You can test slash commands, inspect stored resumes, and review timeline proof-of-work events.
+
+---
+
+### Step 6: Connect to PostgreSQL from Windows (DBeaver / pgAdmin / VS Code)
+Because port `5432` is exposed to Windows host, you can connect any database GUI on Windows:
+* **Host:** `localhost` (or `127.0.0.1`)
+* **Port:** `5432`
+* **Database:** `jobless_empire`
+* **Username:** `postgres`
+* **Password:** `jemp_secret_password_2026` (or whatever you set in `.env`)
+
+To inspect the database directly via command line:
+```powershell
+docker exec -it jemp-postgres psql -U postgres -d jobless_empire
+```
+Useful PostgreSQL commands inside psql:
+* `\dt` &rarr; Lists all tables (`applications`, `members`, `timeline_events`, etc.)
+* `SELECT * FROM members;`
+* `SELECT * FROM timeline_events;`
+* `\q` &rarr; Exit psql
+
+---
+
+### Step 7: Managing the Docker Containers
+* **Stop everything safely:**
+  ```powershell
+  docker compose stop
+  ```
+* **Start back up:**
+  ```powershell
+  docker compose start
+  ```
+* **Restart after code changes:**
+  ```powershell
+  docker compose up -d --build
+  ```
+* **Stop and remove containers (keeps your database data intact):**
+  ```powershell
+  docker compose down
+  ```
+* **Stop and completely wipe database (clean slate):**
+  ```powershell
+  docker compose down -v
+  ```
+
+---
+
+### Step 8: How Future JEMP Bots Connect to this Same Database
+When you develop your next JEMP bot (Timeline Bot, Tasks Bot, etc.):
+* In their `docker-compose.yml`, attach them to the existing network:
+  ```yaml
+  networks:
+    default:
+      external:
+        name: jemp_shared_network
+  ```
+* Point their database host to `jemp-postgres` on port `5432`! Both bots will read and write to the exact same canonical database.
+
+---
+
+## 6. RUNNING WITHOUT DOCKER (DIRECT NODE.JS ON WINDOWS)
 
 ---
 

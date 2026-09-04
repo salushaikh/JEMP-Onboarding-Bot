@@ -29,20 +29,24 @@ export const DatabaseInspector: React.FC<DatabaseInspectorProps> = ({ onRefreshD
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [dbStatus, setDbStatus] = useState<any>(null);
   const [permConfig, setPermConfig] = useState<any>(null);
+  const [timelineArch, setTimelineArch] = useState<any>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPermModal, setShowPermModal] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [mRes, rRes, tRes, oRes, aRes, hRes, pRes] = await Promise.all([
+      const [mRes, rRes, tRes, oRes, aRes, hRes, pRes, archRes] = await Promise.all([
         fetch('/api/members'),
         fetch('/api/resumes'),
         fetch('/api/timeline'),
         fetch('/api/outbox'),
         fetch('/api/audit'),
         fetch('/api/health'),
-        fetch('/api/config/perm-id')
+        fetch('/api/config/perm-id'),
+        fetch('/api/timeline/architecture')
       ]);
 
       if (mRes.ok) setMembers(await mRes.json());
@@ -55,10 +59,30 @@ export const DatabaseInspector: React.FC<DatabaseInspectorProps> = ({ onRefreshD
         setDbStatus(h.database);
       }
       if (pRes.ok) setPermConfig(await pRes.json());
+      if (archRes.ok) setTimelineArch(await archRes.json());
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSyncCanonical = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch('/api/timeline/sync-canonical', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setSyncResult(`Synced ${data.syncedCount} new event(s) (${data.alreadySyncedCount} existing) to ${data.target}.`);
+        await fetchData();
+      } else {
+        setSyncResult('Failed to sync to canonical timeline.');
+      }
+    } catch (e: any) {
+      setSyncResult(`Sync error: ${e.message}`);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -392,37 +416,96 @@ export const DatabaseInspector: React.FC<DatabaseInspectorProps> = ({ onRefreshD
         </div>
       )}
 
-      {/* SUB-VIEW 3: TIMELINE */}
+      {/* SUB-VIEW 3: TIMELINE (CANONICAL SHARED ARCHITECTURE) */}
       {subTab === 'timeline' && (
-        <div className="bg-[#111114] border border-zinc-800 rounded-xl p-4 space-y-3">
-          <div className="text-[11px] text-zinc-400 pb-2 border-b border-zinc-800">
-            Canonical Proof-of-Work events with unique idempotency keys:
-          </div>
-          <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-            {timeline.map((item) => (
-              <div
-                key={item.id}
-                className="p-3 bg-zinc-900/70 border border-zinc-800/80 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-amber-400">{item.eventType}</span>
-                    {item.jempId && (
-                      <span className="px-1.5 py-0.2 bg-zinc-800 text-zinc-200 rounded text-[10px] font-bold">
-                        {item.jempId}
-                      </span>
-                    )}
-                    <span className="text-[10px] text-zinc-400">source: {item.source}</span>
-                  </div>
-                  <div className="text-zinc-300 font-sans">{item.description}</div>
-                  <div className="text-[10px] text-zinc-400 font-mono">idempotencyKey: {item.sourceEventId}</div>
-                </div>
-
-                <div className="text-[10px] text-zinc-400 shrink-0">
-                  {new Date(item.createdAt).toLocaleString()}
-                </div>
+        <div className="bg-[#111114] border border-zinc-800 rounded-xl p-4 space-y-4">
+          {/* Canonical Shared Architecture Notice */}
+          <div className="p-3 bg-zinc-950/80 border border-zinc-800 rounded-lg space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center space-x-2">
+                <span className="font-bold text-zinc-100 text-xs uppercase tracking-wider">
+                  Canonical Timeline Architecture
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    timelineArch?.architectureMode === 'CANONICAL_SHARED_DATABASE'
+                      ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/80'
+                      : timelineArch?.architectureMode === 'CANONICAL_TIMELINE_SERVICE'
+                      ? 'bg-blue-950/80 text-blue-300 border border-blue-800/80'
+                      : 'bg-amber-950/80 text-amber-300 border border-amber-800/80'
+                  }`}
+                >
+                  {timelineArch?.architectureMode === 'CANONICAL_SHARED_DATABASE'
+                    ? 'CANONICAL SHARED DATABASE (ACTIVE)'
+                    : timelineArch?.architectureMode === 'CANONICAL_TIMELINE_SERVICE'
+                    ? 'CANONICAL TIMELINE SERVICE'
+                    : 'TEMPORARY COMPATIBILITY BUFFER'}
+                </span>
               </div>
-            ))}
+
+              <button
+                onClick={handleSyncCanonical}
+                disabled={syncing}
+                className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-amber-300 border border-zinc-700 rounded text-[11px] flex items-center space-x-1.5 transition-colors self-start sm:self-auto"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+                <span>{syncing ? 'Synchronizing...' : 'Migrate / Re-sync to Canonical'}</span>
+              </button>
+            </div>
+
+            <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
+              JEMP is an ecosystem of multiple bots (Onboarding, Timeline, Tasks, Projects) connected to the same database. This table is not an isolated second source of truth. All events are recorded in the canonical shared system with unique idempotency keys.
+            </p>
+
+            {syncResult && (
+              <div className="text-[11px] text-emerald-400 bg-emerald-950/40 p-2 rounded border border-emerald-900/60">
+                {syncResult}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+            {timeline.length === 0 ? (
+              <div className="text-center py-8 text-zinc-500">
+                No timeline events recorded yet.
+              </div>
+            ) : (
+              timeline.map((item) => (
+                <div
+                  key={item.id}
+                  className="p-3 bg-zinc-900/70 border border-zinc-800/80 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-amber-400">{item.eventType}</span>
+                      {item.jempId && (
+                        <span className="px-1.5 py-0.2 bg-zinc-800 text-zinc-200 rounded text-[10px] font-bold">
+                          {item.jempId}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-zinc-400">source: {item.source}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                          item.canonicalSource === 'SHARED_DB'
+                            ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-900/60'
+                            : item.canonicalSource === 'TIMELINE_SERVICE'
+                            ? 'bg-blue-950/70 text-blue-300 border border-blue-900/60'
+                            : 'bg-zinc-800 text-zinc-400'
+                        }`}
+                      >
+                        {item.canonicalSource || 'COMPATIBILITY_BUFFER'}
+                      </span>
+                    </div>
+                    <div className="text-zinc-300 font-sans">{item.description}</div>
+                    <div className="text-[10px] text-zinc-500 font-mono">idempotencyKey: {item.sourceEventId}</div>
+                  </div>
+
+                  <div className="text-[10px] text-zinc-400 shrink-0">
+                    {new Date(item.createdAt).toLocaleString()}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

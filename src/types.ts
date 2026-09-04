@@ -116,6 +116,23 @@ export interface ResumeFile {
   removedAt?: string;
 }
 
+export type TimelineArchitectureMode =
+  | 'CANONICAL_SHARED_DATABASE'
+  | 'CANONICAL_TIMELINE_SERVICE'
+  | 'TEMPORARY_COMPATIBILITY_LAYER';
+
+export interface TimelineSyncStatus {
+  architectureMode: TimelineArchitectureMode;
+  isCanonicalSourceOfTruth: boolean;
+  sharedDbConnected: boolean;
+  timelineServiceConfigured: boolean;
+  timelineServiceUrl?: string;
+  totalEventsInView: number;
+  bufferedCompatibilityCount: number;
+  lastCanonicalSyncTimestamp?: string;
+  notes: string;
+}
+
 export interface TimelineEvent {
   id: string;
   source: string; // 'onboarding'
@@ -126,6 +143,8 @@ export interface TimelineEvent {
   description: string;
   metadata?: Record<string, any>;
   createdAt: string;
+  isSyncedToCanonical?: boolean;
+  canonicalSource?: 'SHARED_DB' | 'TIMELINE_SERVICE' | 'LOCAL_COMPATIBILITY_BUFFER';
 }
 
 export interface OutboxEvent {

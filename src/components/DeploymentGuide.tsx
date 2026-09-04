@@ -14,15 +14,16 @@ import {
   CheckCircle2,
   Sparkles,
   ArrowRight,
-  HardDrive
+  HardDrive,
+  Box
 } from 'lucide-react';
 
 export const DeploymentGuide: React.FC = () => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [generatedSecret, setGeneratedSecret] = useState('');
   const [activeSection, setActiveSection] = useState<
-    'faq' | 'discord' | 'database' | 'hosting'
-  >('faq');
+    'faq' | 'discord' | 'database' | 'docker' | 'hosting'
+  >('docker');
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -96,6 +97,18 @@ export const DeploymentGuide: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveSection('docker')}
+            className={`px-3 py-1.5 rounded transition-colors flex items-center space-x-1.5 ${
+              activeSection === 'docker'
+                ? 'bg-amber-600/20 text-amber-300 border border-amber-500/40 font-bold'
+                : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Box className="w-3.5 h-3.5" />
+            <span>4. Windows &amp; Docker (PostgreSQL)</span>
+          </button>
+
+          <button
             onClick={() => setActiveSection('hosting')}
             className={`px-3 py-1.5 rounded transition-colors flex items-center space-x-1.5 ${
               activeSection === 'hosting'
@@ -104,7 +117,7 @@ export const DeploymentGuide: React.FC = () => {
             }`}
           >
             <Server className="w-3.5 h-3.5" />
-            <span>4. Hosting &amp; Running</span>
+            <span>5. Cloud Hosting</span>
           </button>
         </div>
       </div>
@@ -118,19 +131,30 @@ export const DeploymentGuide: React.FC = () => {
               <span>Answers to Your Questions: Timeline URL, Secret &amp; Encryption Key</span>
             </h3>
 
-            {/* Item 1: Timeline Service URL */}
+            {/* Item 1: Timeline Service URL & Shared Ecosystem */}
             <div className="p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-zinc-100 text-xs">
-                  Q1: What is <code className="text-amber-400">TIMELINE_SERVICE_URL</code> and how do I get it?
+                  Q1: What is <code className="text-amber-400">TIMELINE_SERVICE_URL</code> and the Canonical Architecture?
                 </span>
-                <span className="px-2 py-0.5 bg-zinc-800 text-emerald-400 rounded text-[10px]">Optional</span>
+                <span className="px-2 py-0.5 bg-zinc-800 text-emerald-400 rounded text-[10px]">Canonical Architecture</span>
               </div>
               <p className="text-zinc-300 font-sans leading-relaxed">
-                <strong>Plain English:</strong> In the Jobless Empire vision, there is a second bot called the <em>Timeline Bot</em> (responsible for recording proof-of-work achievements). If you run both bots on the same server or across servers, <code className="text-amber-300">TIMELINE_SERVICE_URL</code> is simply the web address of that companion bot (e.g. <code className="text-zinc-300">http://localhost:3001</code>).
+                <strong>Plain English:</strong> JEMP is a system of multiple bots (Onboarding, Timeline / Proof-of-Work, Brainstorming, Tasks, Client/Hiring) connected to the <strong>same shared PostgreSQL database</strong>. There is strictly <strong>one canonical source of truth</strong> for the entire ecosystem.
               </p>
-              <div className="p-3 bg-black/40 border border-zinc-800 rounded text-[11px] text-emerald-300">
-                💡 <strong>Do you need it right now? NO!</strong> If you don't have the Timeline bot running yet, <strong>leave it blank</strong>. This Onboarding bot stores all timeline events and achievements locally in its own local database (`timelineEvents` table) without needing any external server.
+              <div className="p-3 bg-black/40 border border-zinc-800 rounded text-[11px] space-y-1.5 text-zinc-300">
+                <p className="text-amber-300 font-bold">
+                  🔗 How the Bots Share Data:
+                </p>
+                <p>
+                  1. <strong>Shared PostgreSQL (Recommended):</strong> When all bots share the same PostgreSQL database, the <code>timeline_events</code> table is the single canonical source of truth. The Onboarding bot writes directly to it upon approval, rule acceptance, and membership activation.
+                </p>
+                <p>
+                  2. <strong>Timeline Companion Service (Optional):</strong> If you run the Timeline Bot as a standalone microservice with an API, <code>TIMELINE_SERVICE_URL</code> is its endpoint (e.g. <code>http://localhost:3001</code>).
+                </p>
+                <p>
+                  3. <strong>Standalone Dev (Compatibility Buffer):</strong> If you run the Onboarding bot in local dev without PostgreSQL, events are buffered in the local compatibility store and can be synced anytime via the Database Inspector.
+                </p>
               </div>
             </div>
 
@@ -143,10 +167,10 @@ export const DeploymentGuide: React.FC = () => {
                 <span className="px-2 py-0.5 bg-zinc-800 text-emerald-400 rounded text-[10px]">Optional</span>
               </div>
               <p className="text-zinc-300 font-sans leading-relaxed">
-                <strong>Plain English:</strong> It is simply a shared password between this Onboarding bot and your Timeline bot so a stranger cannot forge timeline events.
+                <strong>Plain English:</strong> It is a shared authentication token between this Onboarding bot and your Timeline bot service so an unauthorized caller cannot inject spoofed events.
               </p>
               <p className="text-zinc-300 font-sans leading-relaxed">
-                <strong>How do you get it?</strong> You do not get it from Discord or any website. You literally invent any secret passphrase you want (for example: <code className="text-amber-300">my-secret-timeline-token-2026</code>) and write that same word in both bots' <code className="text-zinc-300">.env</code> files! If you have no Timeline bot, leave it blank.
+                <strong>How do you get it?</strong> You invent any secret passphrase you want (for example: <code className="text-amber-300">jemp-shared-secret-2026</code>) and place the identical value in both bots' <code className="text-zinc-300">.env</code> files! If connecting via shared PostgreSQL directly, you don't even need this token.
               </p>
             </div>
 
@@ -349,7 +373,260 @@ DB_NAME=jobless_empire`}
         </div>
       )}
 
-      {/* SECTION 4: HOSTING & COMMANDS */}
+      {/* SECTION 4: WINDOWS DOCKER & POSTGRESQL SETUP */}
+      {activeSection === 'docker' && (
+        <div className="space-y-4">
+          <div className="bg-[#111114] border border-zinc-800 rounded-xl p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wide flex items-center space-x-2">
+                  <Box className="w-4 h-4 text-amber-400" />
+                  <span>Local Windows Setup with Docker &amp; PostgreSQL</span>
+                </h3>
+                <p className="text-zinc-400 text-xs font-sans mt-0.5">
+                  Complete, turnkey guide to run PostgreSQL and the Onboarding Bot in Docker on Windows.
+                </p>
+              </div>
+              <span className="px-2.5 py-1 bg-emerald-950/60 text-emerald-300 border border-emerald-800/80 rounded text-[11px] font-bold self-start sm:self-auto">
+                RECOMMENDED ARCHITECTURE
+              </span>
+            </div>
+
+            {/* Architecture Diagram Callout */}
+            <div className="p-4 bg-black/60 border border-zinc-800 rounded-xl space-y-2">
+              <div className="text-[11px] font-bold text-zinc-300 flex items-center space-x-2">
+                <Server className="w-3.5 h-3.5 text-amber-400" />
+                <span>What Runs on Your Windows Laptop:</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-amber-400 text-xs">Container 1: jemp-postgres</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">Port 5432</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Official PostgreSQL 16. Persistent volume <code>jemp_postgres_data</code>. Schema auto-initialized from <code>schema.sql</code>. Shared by all JEMP bots.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-amber-400 text-xs">Container 2: jemp-onboarding-bot</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">Port 3000</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Runs the Discord Bot gateway and Web Control Panel. Connects to PostgreSQL directly via internal Docker network <code>jemp_shared_network</code>.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 1 */}
+            <div className="p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl space-y-2">
+              <div className="flex items-center space-x-2 text-zinc-100 font-bold text-xs">
+                <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px]">1</span>
+                <span>Install Docker Desktop on Windows</span>
+              </div>
+              <p className="text-zinc-300 font-sans text-xs pl-7">
+                Download and install <strong>Docker Desktop</strong> from{' '}
+                <a
+                  href="https://www.docker.com/products/docker-desktop"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-amber-400 hover:underline"
+                >
+                  docker.com
+                </a>
+                . Ensure <strong>"Use WSL 2 instead of Hyper-V"</strong> is enabled (recommended default). Start Docker Desktop and wait until the whale icon shows green "Running".
+              </p>
+            </div>
+
+            {/* Step 2 */}
+            <div className="p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-zinc-100 font-bold text-xs">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px]">2</span>
+                  <span>Configure Environment File (.env)</span>
+                </div>
+                <button
+                  onClick={() =>
+                    copyToClipboard(
+                      `copy .env.example .env\nnotepad .env`,
+                      'copy-env-cmd'
+                    )
+                  }
+                  className="text-amber-400 hover:text-amber-300 flex items-center space-x-1 text-[11px]"
+                >
+                  {copiedKey === 'copy-env-cmd' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedKey === 'copy-env-cmd' ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+              <p className="text-zinc-300 font-sans text-xs pl-7">
+                In PowerShell or Command Prompt in the project folder, copy <code>.env.example</code> to <code>.env</code>:
+              </p>
+              <pre className="p-2.5 bg-black border border-zinc-800 rounded text-[11px] text-zinc-200 ml-7 overflow-x-auto">
+{`copy .env.example .env
+notepad .env`}
+              </pre>
+              <p className="text-zinc-400 font-sans text-xs pl-7">
+                Set your <code>DISCORD_TOKEN</code> and <code>DISCORD_CLIENT_ID</code>. The database variables are already pre-configured to match the Docker PostgreSQL container (user: <code>postgres</code>, password: <code>jemp_secret_password_2026</code>).
+              </p>
+            </div>
+
+            {/* Step 3 */}
+            <div className="p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-zinc-100 font-bold text-xs">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px]">3</span>
+                  <span>Launch Everything with Docker Compose</span>
+                </div>
+                <button
+                  onClick={() =>
+                    copyToClipboard(
+                      `docker compose up -d --build`,
+                      'docker-up-cmd'
+                    )
+                  }
+                  className="text-amber-400 hover:text-amber-300 flex items-center space-x-1 text-[11px]"
+                >
+                  {copiedKey === 'docker-up-cmd' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedKey === 'docker-up-cmd' ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+              <p className="text-zinc-300 font-sans text-xs pl-7">
+                Run this single command in PowerShell inside your project folder:
+              </p>
+              <pre className="p-2.5 bg-black border border-zinc-800 rounded text-[11px] text-amber-300 font-bold ml-7 overflow-x-auto">
+{`docker compose up -d --build`}
+              </pre>
+              <div className="p-3 bg-black/40 border border-zinc-800 rounded text-[11px] text-zinc-300 ml-7 space-y-1">
+                <div className="text-emerald-400 font-bold">✨ What Docker automatically handles for you:</div>
+                <div>1. Spawns PostgreSQL 16 container with a persistent Windows Docker volume.</div>
+                <div>2. Executes <code>schema.sql</code> to create all 9 canonical tables, indexes, and sequential JEMP# generator.</div>
+                <div>3. Compiles the TypeScript bot and mounts it on port 3000.</div>
+              </div>
+            </div>
+
+            {/* Step 4 */}
+            <div className="p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl space-y-2">
+              <div className="flex items-center space-x-2 text-zinc-100 font-bold text-xs">
+                <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px]">4</span>
+                <span>Verify Status &amp; Open Web Dashboard</span>
+              </div>
+              <div className="space-y-2 pl-7">
+                <p className="text-zinc-300 font-sans text-xs">
+                  Verify containers in PowerShell:
+                </p>
+                <pre className="p-2.5 bg-black border border-zinc-800 rounded text-[11px] text-zinc-200 overflow-x-auto">
+{`docker compose ps`}
+                </pre>
+                <p className="text-zinc-300 font-sans text-xs">
+                  Then open your browser on your Windows laptop:
+                </p>
+                <a
+                  href="http://localhost:3000"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded hover:bg-amber-500/30 text-xs font-bold"
+                >
+                  <span>Open Web Control Panel (http://localhost:3000)</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            </div>
+
+            {/* Step 5: Connecting from Windows DB tools */}
+            <div className="p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-zinc-100 font-bold text-xs">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px]">5</span>
+                  <span>Connect to PostgreSQL via DBeaver, pgAdmin or CLI</span>
+                </div>
+                <button
+                  onClick={() =>
+                    copyToClipboard(
+                      `docker exec -it jemp-postgres psql -U postgres -d jobless_empire`,
+                      'psql-cmd'
+                    )
+                  }
+                  className="text-amber-400 hover:text-amber-300 flex items-center space-x-1 text-[11px]"
+                >
+                  {copiedKey === 'psql-cmd' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedKey === 'psql-cmd' ? 'Copied' : 'Copy CLI'}</span>
+                </button>
+              </div>
+              <p className="text-zinc-300 font-sans text-xs pl-7">
+                Because port <code>5432</code> is exposed to your Windows host, you can connect from any desktop database tool:
+              </p>
+              <div className="ml-7 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                <div className="p-2 bg-black border border-zinc-800 rounded">
+                  <div className="text-zinc-500 text-[10px]">HOST</div>
+                  <div className="text-zinc-200 font-bold">localhost</div>
+                </div>
+                <div className="p-2 bg-black border border-zinc-800 rounded">
+                  <div className="text-zinc-500 text-[10px]">PORT</div>
+                  <div className="text-zinc-200 font-bold">5432</div>
+                </div>
+                <div className="p-2 bg-black border border-zinc-800 rounded">
+                  <div className="text-zinc-500 text-[10px]">DATABASE</div>
+                  <div className="text-zinc-200 font-bold">jobless_empire</div>
+                </div>
+                <div className="p-2 bg-black border border-zinc-800 rounded">
+                  <div className="text-zinc-500 text-[10px]">USER / PASSWORD</div>
+                  <div className="text-zinc-200 font-bold">postgres / jemp_secret_password_2026</div>
+                </div>
+              </div>
+              <p className="text-zinc-400 font-sans text-xs pl-7">
+                Or inspect tables directly in PowerShell:
+              </p>
+              <pre className="p-2.5 bg-black border border-zinc-800 rounded text-[11px] text-zinc-200 ml-7 overflow-x-auto">
+{`docker exec -it jemp-postgres psql -U postgres -d jobless_empire
+# Inside psql, type: \\dt
+# Then try: SELECT * FROM members;`}
+              </pre>
+            </div>
+
+            {/* Step 6: Multi-Bot Ecosystem Sharing */}
+            <div className="p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl space-y-2">
+              <div className="font-bold text-zinc-100 text-xs flex items-center space-x-2">
+                <Database className="w-3.5 h-3.5 text-amber-400" />
+                <span>How Future JEMP Bots Connect to this PostgreSQL Container</span>
+              </div>
+              <p className="text-zinc-300 font-sans text-xs leading-relaxed">
+                When you deploy companion bots (Timeline Bot, Tasks Bot, Projects Bot):
+              </p>
+              <ul className="list-disc list-inside text-zinc-400 font-sans text-xs space-y-1 pl-1">
+                <li>They can join the same Docker network: <code className="text-amber-300">jemp_shared_network</code>.</li>
+                <li>Set their database host to <code className="text-zinc-200">jemp-postgres</code> on port <code className="text-zinc-200">5432</code>.</li>
+                <li>They immediately read and write to the same canonical tables without any data syncing needed!</li>
+              </ul>
+            </div>
+
+            {/* Common Docker Management Commands */}
+            <div className="p-4 bg-black border border-zinc-800 rounded-xl space-y-2">
+              <div className="text-zinc-400 text-[11px] font-bold">USEFUL DOCKER COMMANDS FOR WINDOWS:</div>
+              <pre className="text-zinc-300 font-mono text-[11px] leading-relaxed overflow-x-auto">
+{`# View real-time logs of the bot:
+docker compose logs -f onboarding-bot
+
+# View database logs:
+docker compose logs -f postgres
+
+# Stop containers without losing data:
+docker compose stop
+
+# Restart containers:
+docker compose start
+
+# Rebuild after making code edits:
+docker compose up -d --build`}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 5: HOSTING & COMMANDS */}
       {activeSection === 'hosting' && (
         <div className="space-y-4">
           <div className="bg-[#111114] border border-zinc-800 rounded-xl p-5 space-y-4">

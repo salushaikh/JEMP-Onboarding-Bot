@@ -287,6 +287,28 @@ async function startServer() {
     }
   });
 
+  app.get('/api/timeline/architecture', (req, res) => {
+    try {
+      const syncStatus = dbManager.getTimelineSyncStatus();
+      res.json(syncStatus);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/timeline/sync-canonical', async (req, res) => {
+    try {
+      const result = await dbManager.syncLocalToCanonicalTimeline();
+      res.json({
+        success: true,
+        ...result,
+        syncStatus: dbManager.getTimelineSyncStatus()
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/outbox', async (req, res) => {
     try {
       const events = await dbManager.listOutboxEvents();

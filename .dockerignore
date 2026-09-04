@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+.gitignore
+.jemp_data.json
+.env
+storage/resumes/*
+!storage/resumes/.gitkeep
+npm-debug.log

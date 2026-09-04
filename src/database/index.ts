@@ -15,7 +15,9 @@ import {
   OutboxEvent,
   AuditLogEntry,
   StorageProvider,
-  PermIdConfig
+  PermIdConfig,
+  TimelineSyncStatus,
+  TimelineArchitectureMode
 } from '../types.ts';
 import { hashNormalizedEmail, normalizeEmail } from '../security/index.ts';
 
@@ -39,6 +41,7 @@ class DatabaseManager {
   private pgPool: Pool | null = null;
   private isPgConnected: boolean = false;
   private connectionDetails: string = 'Internal Durable Store (.jemp_data.json)';
+  private lastCanonicalSync?: string;
   private state: DatabaseState = {
     applications: [],
     members: [],
@@ -109,8 +112,9 @@ class DatabaseManager {
         const client = await this.pgPool.connect();
         client.release();
         this.isPgConnected = true;
-        this.connectionDetails = `PostgreSQL URI (${dbUrl.replace(/:[^:@]*@/, ':****@')})`;
-        console.log('Successfully connected to external PostgreSQL system of record via DATABASE_URL.');
+        this.connectionDetails = `Canonical PostgreSQL (${dbUrl.replace(/:[^:@]*@/, ':****@')})`;
+        console.log('Successfully connected to external canonical PostgreSQL shared database via DATABASE_URL.');
+        await this.ensurePgSchema();
       } else if (user && database) {
         this.pgPool = new Pool({
           host: host || 'localhost',
@@ -125,24 +129,148 @@ class DatabaseManager {
         const client = await this.pgPool.connect();
         client.release();
         this.isPgConnected = true;
-        this.connectionDetails = `PostgreSQL (${user}@${host || 'localhost'}:${port}/${database})`;
-        console.log(`Successfully connected to PostgreSQL system of record at ${host || 'localhost'}:${port}/${database}.`);
+        this.connectionDetails = `Canonical PostgreSQL (${user}@${host || 'localhost'}:${port}/${database})`;
+        console.log(`Successfully connected to canonical PostgreSQL shared database at ${host || 'localhost'}:${port}/${database}.`);
+        await this.ensurePgSchema();
       } else {
-        this.connectionDetails = 'Local Embedded Database (.jemp_data.json)';
+        this.connectionDetails = 'Local Compatibility Layer (.jemp_data.json)';
       }
     } catch (err: any) {
-      console.warn(`PostgreSQL connection attempt to ${host || 'localhost'}:${port} failed (${err.message}). Using local durable system of record.`);
+      console.warn(`PostgreSQL connection attempt to ${host || 'localhost'}:${port} failed (${err.message}). Using local compatibility layer.`);
       this.isPgConnected = false;
-      this.connectionDetails = 'Local Embedded Database (PostgreSQL fallback active)';
+      this.connectionDetails = 'Local Compatibility Buffer (PostgreSQL unavailable)';
+    }
+  }
+
+  private async ensurePgSchema() {
+    if (!this.pgPool || !this.isPgConnected) return;
+    try {
+      // Ensure shared canonical JEMP tables exist so all bots query same schema
+      await this.pgPool.query(`
+        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+        CREATE SEQUENCE IF NOT EXISTS jemp_member_seq START 1 INCREMENT 1;
+
+        CREATE TABLE IF NOT EXISTS applications (
+            id VARCHAR(64) PRIMARY KEY,
+            applicant_name VARCHAR(255) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            email_normalized_hash VARCHAR(64) NOT NULL UNIQUE,
+            status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+            notes TEXT,
+            expiration_date TIMESTAMP WITH TIME ZONE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS members (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            jemp_id VARCHAR(32) UNIQUE,
+            discord_user_id VARCHAR(64) UNIQUE,
+            application_id VARCHAR(64) REFERENCES applications(id),
+            name VARCHAR(255) NOT NULL,
+            email_normalized_hash VARCHAR(64) NOT NULL,
+            timezone VARCHAR(64),
+            membership_status VARCHAR(32) NOT NULL DEFAULT 'APPLIED',
+            current_resume_id UUID,
+            rules_version_accepted VARCHAR(32),
+            rules_accepted_at TIMESTAMP WITH TIME ZONE,
+            safety_acknowledged_at TIMESTAMP WITH TIME ZONE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS onboarding_sessions (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            discord_user_id VARCHAR(64) NOT NULL UNIQUE,
+            application_id VARCHAR(64) REFERENCES applications(id),
+            member_id UUID REFERENCES members(id),
+            current_step VARCHAR(64) NOT NULL DEFAULT 'EMAIL_REQUIRED',
+            staged_name VARCHAR(255),
+            staged_timezone VARCHAR(64),
+            rules_accepted BOOLEAN DEFAULT FALSE,
+            safety_acknowledged BOOLEAN DEFAULT FALSE,
+            attempts_count INT DEFAULT 0,
+            last_attempt_at TIMESTAMP WITH TIME ZONE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS resume_files (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            member_id UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+            application_id VARCHAR(64) NOT NULL REFERENCES applications(id),
+            filename VARCHAR(255) NOT NULL,
+            mime_type VARCHAR(128) NOT NULL,
+            file_size BIGINT NOT NULL,
+            sha256_hash VARCHAR(64) NOT NULL,
+            storage_provider VARCHAR(32) NOT NULL DEFAULT 'local',
+            storage_key VARCHAR(512) NOT NULL,
+            version INT NOT NULL DEFAULT 1,
+            status VARCHAR(32) NOT NULL DEFAULT 'CURRENT',
+            data_base64 TEXT,
+            uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            removed_at TIMESTAMP WITH TIME ZONE
+        );
+
+        -- CANONICAL TIMELINE ARCHITECTURE (SHARED BY ALL JEMP BOTS)
+        CREATE TABLE IF NOT EXISTS timeline_events (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            source VARCHAR(64) NOT NULL DEFAULT 'onboarding',
+            source_event_id VARCHAR(255) NOT NULL UNIQUE,
+            event_type VARCHAR(64) NOT NULL,
+            member_id UUID REFERENCES members(id),
+            jemp_id VARCHAR(32),
+            description TEXT NOT NULL,
+            metadata JSONB DEFAULT '{}',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS outbox_events (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            event_type VARCHAR(64) NOT NULL,
+            aggregate_type VARCHAR(32) NOT NULL,
+            aggregate_id VARCHAR(64) NOT NULL,
+            payload JSONB NOT NULL DEFAULT '{}',
+            status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+            retry_count INT NOT NULL DEFAULT 0,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            dispatched_at TIMESTAMP WITH TIME ZONE
+        );
+
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            actor VARCHAR(128) NOT NULL,
+            target VARCHAR(128) NOT NULL,
+            action VARCHAR(64) NOT NULL,
+            source VARCHAR(64) NOT NULL DEFAULT 'onboarding_bot',
+            relevant_ids JSONB DEFAULT '{}',
+            safe_metadata JSONB DEFAULT '{}',
+            timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key VARCHAR(128) PRIMARY KEY,
+            value JSONB NOT NULL,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log('Canonical JEMP shared schema confirmed on PostgreSQL database.');
+      await this.syncLocalToCanonicalTimeline();
+    } catch (err) {
+      console.warn('PostgreSQL schema verification warning:', err);
     }
   }
 
   public getStatus() {
     const permConfig = this.getPermIdConfig();
+    const timelineSync = this.getTimelineSyncStatus();
     return {
-      type: this.isPgConnected ? 'PostgreSQL (Active)' : 'Durable System of Record (Local DB / PostgreSQL Compatible)',
+      type: this.isPgConnected ? 'Canonical PostgreSQL Database (Active Shared System)' : 'Local Compatibility Buffer (Standalone / Dev)',
       connectionDetails: this.connectionDetails,
       isConnected: true,
+      isCanonicalSharedDb: this.isPgConnected,
+      timelineArchitecture: timelineSync.architectureMode,
+      timelineSyncStatus: timelineSync,
       applicationsCount: this.state.applications.length,
       membersCount: this.state.members.length,
       resumesCount: this.state.resumeFiles.length,
@@ -152,6 +280,121 @@ class DatabaseManager {
       currentJempSequence: permConfig.currentSequence,
       permIdConfig: permConfig,
       nextPermIdPreview: this.previewPermId()
+    };
+  }
+
+  // --- CANONICAL TIMELINE ARCHITECTURE & COMPATIBILITY SYNC ---
+  public getTimelineSyncStatus(): TimelineSyncStatus {
+    const isSharedDb = this.isPgConnected;
+    const hasTimelineService = Boolean(process.env.TIMELINE_SERVICE_URL);
+
+    let mode: TimelineArchitectureMode = 'TEMPORARY_COMPATIBILITY_LAYER';
+    if (isSharedDb) {
+      mode = 'CANONICAL_SHARED_DATABASE';
+    } else if (hasTimelineService) {
+      mode = 'CANONICAL_TIMELINE_SERVICE';
+    }
+
+    const unSyncedCount = this.state.timelineEvents.filter(e => !e.isSyncedToCanonical).length;
+
+    return {
+      architectureMode: mode,
+      isCanonicalSourceOfTruth: isSharedDb || hasTimelineService,
+      sharedDbConnected: isSharedDb,
+      timelineServiceConfigured: hasTimelineService,
+      timelineServiceUrl: process.env.TIMELINE_SERVICE_URL,
+      totalEventsInView: this.state.timelineEvents.length,
+      bufferedCompatibilityCount: unSyncedCount,
+      lastCanonicalSyncTimestamp: this.lastCanonicalSync,
+      notes: isSharedDb
+        ? 'Connected to canonical shared PostgreSQL database. All JEMP bots read & write to this shared timeline_events table.'
+        : hasTimelineService
+        ? `Connected to canonical Timeline Service at ${process.env.TIMELINE_SERVICE_URL}. Events forward to the shared timeline API.`
+        : 'Running in temporary local compatibility layer. Events are buffered safely and can be migrated once the canonical shared database or timeline service is connected.'
+    };
+  }
+
+  public async syncLocalToCanonicalTimeline(): Promise<{
+    syncedCount: number;
+    alreadySyncedCount: number;
+    failedCount: number;
+    target: string;
+  }> {
+    let syncedCount = 0;
+    let alreadySyncedCount = 0;
+    let failedCount = 0;
+    const target = this.isPgConnected
+      ? 'Canonical PostgreSQL Database (timeline_events table)'
+      : process.env.TIMELINE_SERVICE_URL
+      ? `Canonical Timeline Service (${process.env.TIMELINE_SERVICE_URL})`
+      : 'Local Compatibility Buffer (No external canonical target configured)';
+
+    const timelineServiceUrl = process.env.TIMELINE_SERVICE_URL;
+
+    for (const ev of this.state.timelineEvents) {
+      // 1. Shared PostgreSQL database synchronization
+      if (this.isPgConnected && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `INSERT INTO timeline_events (id, source, source_event_id, event_type, member_id, jemp_id, description, metadata, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (source_event_id) DO NOTHING
+             RETURNING id`,
+            [
+              ev.id,
+              ev.source || 'onboarding',
+              ev.sourceEventId,
+              ev.eventType,
+              ev.memberId || null,
+              ev.jempId || null,
+              ev.description,
+              JSON.stringify(ev.metadata || {}),
+              ev.createdAt
+            ]
+          );
+          if (res.rowCount && res.rowCount > 0) {
+            syncedCount++;
+          } else {
+            alreadySyncedCount++;
+          }
+          ev.isSyncedToCanonical = true;
+          ev.canonicalSource = 'SHARED_DB';
+        } catch (e) {
+          failedCount++;
+          console.warn('Failed to sync event to canonical pg:', ev.sourceEventId, e);
+        }
+      }
+
+      // 2. Canonical Timeline Service API synchronization
+      if (timelineServiceUrl) {
+        try {
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (process.env.TIMELINE_SERVICE_SECRET) {
+            headers['X-JEMP-Service-Secret'] = process.env.TIMELINE_SERVICE_SECRET;
+          }
+          const response = await fetch(`${timelineServiceUrl.replace(/\/$/, '')}/api/events`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(ev)
+          });
+          if (response.ok) {
+            ev.isSyncedToCanonical = true;
+            ev.canonicalSource = 'TIMELINE_SERVICE';
+          }
+        } catch (err) {
+          // Non-blocking
+        }
+      }
+    }
+
+    this.lastCanonicalSync = new Date().toISOString();
+    this.persistState();
+
+    return {
+      syncedCount,
+      alreadySyncedCount,
+      failedCount,
+      target
     };
   }
 
@@ -237,6 +480,36 @@ class DatabaseManager {
   }
 
   public async saveApplication(app: Application): Promise<Application> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `INSERT INTO applications (id, applicant_name, email, email_normalized_hash, status, notes, expiration_date, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (id) DO UPDATE SET
+             applicant_name = EXCLUDED.applicant_name,
+             email = EXCLUDED.email,
+             email_normalized_hash = EXCLUDED.email_normalized_hash,
+             status = EXCLUDED.status,
+             notes = EXCLUDED.notes,
+             expiration_date = EXCLUDED.expiration_date,
+             updated_at = EXCLUDED.updated_at`,
+          [
+            app.id,
+            app.applicantName,
+            app.email,
+            app.emailNormalizedHash,
+            app.status,
+            app.notes || null,
+            app.expirationDate || null,
+            app.createdAt,
+            app.updatedAt
+          ]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL saveApplication fallback:', err);
+      }
+    }
+
     const idx = this.state.applications.findIndex(a => a.id === app.id);
     if (idx >= 0) {
       this.state.applications[idx] = app;
@@ -269,6 +542,44 @@ class DatabaseManager {
   }
 
   public async saveMember(member: Member): Promise<Member> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `INSERT INTO members (id, jemp_id, discord_user_id, application_id, name, email_normalized_hash, timezone, membership_status, current_resume_id, rules_version_accepted, rules_accepted_at, safety_acknowledged_at, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (id) DO UPDATE SET
+             jemp_id = EXCLUDED.jemp_id,
+             discord_user_id = EXCLUDED.discord_user_id,
+             name = EXCLUDED.name,
+             timezone = EXCLUDED.timezone,
+             membership_status = EXCLUDED.membership_status,
+             current_resume_id = EXCLUDED.current_resume_id,
+             rules_version_accepted = EXCLUDED.rules_version_accepted,
+             rules_accepted_at = EXCLUDED.rules_accepted_at,
+             safety_acknowledged_at = EXCLUDED.safety_acknowledged_at,
+             updated_at = EXCLUDED.updated_at`,
+          [
+            member.id,
+            member.jempId || null,
+            member.discordUserId || null,
+            member.applicationId,
+            member.name,
+            member.emailNormalizedHash,
+            member.timezone || null,
+            member.membershipStatus,
+            member.currentResumeId || null,
+            member.rulesVersionAccepted || null,
+            member.rulesAcceptedAt || null,
+            member.safetyAcknowledgedAt || null,
+            member.createdAt,
+            member.updatedAt
+          ]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL saveMember fallback:', err);
+      }
+    }
+
     const idx = this.state.members.findIndex(m => m.id === member.id);
     if (idx >= 0) {
       this.state.members[idx] = member;
@@ -311,6 +622,35 @@ class DatabaseManager {
   }
 
   public async saveResumeFile(resume: ResumeFile): Promise<ResumeFile> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `INSERT INTO resume_files (id, member_id, application_id, filename, mime_type, file_size, sha256_hash, storage_provider, storage_key, version, status, data_base64, uploaded_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           ON CONFLICT (id) DO UPDATE SET
+             status = EXCLUDED.status,
+             data_base64 = EXCLUDED.data_base64`,
+          [
+            resume.id,
+            resume.memberId,
+            resume.applicationId,
+            resume.filename,
+            resume.mimeType,
+            resume.fileSize,
+            resume.sha256Hash,
+            resume.storageProvider,
+            resume.storageKey,
+            resume.version,
+            resume.status,
+            resume.dataBase64 || null,
+            resume.uploadedAt
+          ]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL saveResumeFile fallback:', err);
+      }
+    }
+
     const idx = this.state.resumeFiles.findIndex(r => r.id === resume.id);
     if (idx >= 0) {
       this.state.resumeFiles[idx] = resume;
@@ -321,8 +661,61 @@ class DatabaseManager {
     return resume;
   }
 
-  // --- TIMELINE EVENTS ---
+  // --- TIMELINE EVENTS (CANONICAL SHARED ARCHITECTURE) ---
   public async saveTimelineEvent(event: TimelineEvent): Promise<{ created: boolean; event: TimelineEvent }> {
+    // 1. If connected to Canonical Shared PostgreSQL database, write directly to shared timeline_events table
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `INSERT INTO timeline_events (id, source, source_event_id, event_type, member_id, jemp_id, description, metadata, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (source_event_id) DO NOTHING
+           RETURNING id`,
+          [
+            event.id,
+            event.source || 'onboarding',
+            event.sourceEventId,
+            event.eventType,
+            event.memberId || null,
+            event.jempId || null,
+            event.description,
+            JSON.stringify(event.metadata || {}),
+            event.createdAt
+          ]
+        );
+        event.isSyncedToCanonical = true;
+        event.canonicalSource = 'SHARED_DB';
+      } catch (err) {
+        console.warn('Could not write to canonical PostgreSQL timeline_events:', err);
+      }
+    }
+
+    // 2. If canonical Timeline service URL is configured, forward event
+    const timelineServiceUrl = process.env.TIMELINE_SERVICE_URL;
+    if (timelineServiceUrl) {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (process.env.TIMELINE_SERVICE_SECRET) {
+          headers['X-JEMP-Service-Secret'] = process.env.TIMELINE_SERVICE_SECRET;
+        }
+        await fetch(`${timelineServiceUrl.replace(/\/$/, '')}/api/events`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(event)
+        });
+        event.isSyncedToCanonical = true;
+        event.canonicalSource = 'TIMELINE_SERVICE';
+      } catch (err) {
+        console.warn(`[Canonical Timeline Service] Failed to forward to ${timelineServiceUrl}:`, err);
+      }
+    }
+
+    if (!event.canonicalSource) {
+      event.canonicalSource = 'LOCAL_COMPATIBILITY_BUFFER';
+      event.isSyncedToCanonical = false;
+    }
+
+    // Maintain in-memory / file cache for fast UI access and local dev fallback
     const existing = this.state.timelineEvents.find(e => e.sourceEventId === event.sourceEventId);
     if (existing) {
       return { created: false, event: existing };
@@ -333,6 +726,36 @@ class DatabaseManager {
   }
 
   public async listTimelineEvents(memberId?: string): Promise<TimelineEvent[]> {
+    // If connected to shared PostgreSQL database, query canonical table
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        let query = 'SELECT * FROM timeline_events ORDER BY created_at DESC';
+        let params: any[] = [];
+        if (memberId) {
+          query = 'SELECT * FROM timeline_events WHERE member_id = $1 ORDER BY created_at DESC';
+          params = [memberId];
+        }
+        const res = await this.pgPool.query(query, params);
+        if (res.rows && res.rows.length > 0) {
+          return res.rows.map(row => ({
+            id: row.id,
+            source: row.source,
+            sourceEventId: row.source_event_id,
+            eventType: row.event_type,
+            memberId: row.member_id,
+            jempId: row.jemp_id,
+            description: row.description,
+            metadata: row.metadata,
+            createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+            isSyncedToCanonical: true,
+            canonicalSource: 'SHARED_DB'
+          }));
+        }
+      } catch (err) {
+        console.warn('PostgreSQL timeline_events query fallback:', err);
+      }
+    }
+
     if (memberId) {
       return this.state.timelineEvents.filter(e => e.memberId === memberId);
     }
@@ -341,6 +764,29 @@ class DatabaseManager {
 
   // --- OUTBOX EVENTS ---
   public async saveOutboxEvent(event: OutboxEvent): Promise<OutboxEvent> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `INSERT INTO outbox_events (id, event_type, aggregate_type, aggregate_id, payload, status, retry_count, created_at, dispatched_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            event.id,
+            event.eventType,
+            event.aggregateType,
+            event.aggregateId,
+            JSON.stringify(event.payload),
+            event.status,
+            event.retryCount,
+            event.createdAt,
+            event.dispatchedAt || null
+          ]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL saveOutboxEvent fallback:', err);
+      }
+    }
+
     this.state.outboxEvents.unshift(event);
     this.persistState();
     return event;
@@ -352,6 +798,28 @@ class DatabaseManager {
 
   // --- AUDIT LOGS ---
   public async saveAuditLog(log: AuditLogEntry): Promise<AuditLogEntry> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `INSERT INTO audit_log (id, actor, target, action, source, relevant_ids, safe_metadata, timestamp)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            log.id,
+            log.actor,
+            log.target,
+            log.action,
+            log.source || 'onboarding_bot',
+            JSON.stringify(log.relevantIds || {}),
+            JSON.stringify(log.safeMetadata || {}),
+            log.timestamp
+          ]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL saveAuditLog fallback:', err);
+      }
+    }
+
     this.state.auditLogs.unshift(log);
     this.persistState();
     return log;
