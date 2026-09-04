@@ -108,9 +108,26 @@ export const onboardCommand = new SlashCommandBuilder()
     sub
       .setName('clear-demo')
       .setDescription('Clear all demo data from the system')
+  )
+  .addSubcommand(sub =>
+    sub
+      .setName('post-verify-card')
+      .setDescription('Post or refresh the persistent Email Verification Card in #verify-me')
+      .addChannelOption(opt => opt.setName('channel').setDescription('Optional target channel (defaults to #verify-me)'))
+  )
+  .addSubcommand(sub =>
+    sub
+      .setName('post-profile-card')
+      .setDescription('Post the Profile Manager guide card in #profile-manager')
+      .addChannelOption(opt => opt.setName('channel').setDescription('Optional target channel (defaults to #profile-manager)'))
   );
 
-// 2. /membership (Member Command)
+// 2. /verify (Direct Verification Command for Users)
+export const verifyCommand = new SlashCommandBuilder()
+  .setName('verify')
+  .setDescription('Verify your application email and claim your permanent JEMP# identifier');
+
+// 3. /membership (Member Command)
 export const membershipCommand = new SlashCommandBuilder()
   .setName('membership')
   .setDescription('View and manage your Jobless Empire membership')
@@ -161,6 +178,7 @@ export const resumeCommand = new SlashCommandBuilder()
   );
 
 export const allCommands = [
+  verifyCommand,
   onboardCommand,
   membershipCommand,
   profileCommand,

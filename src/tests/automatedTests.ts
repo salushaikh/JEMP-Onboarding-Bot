@@ -17,6 +17,7 @@ import {
 import { runReconciliationScan } from '../services/reconciliationService.ts';
 import { dbManager } from '../database/index.ts';
 import { ApplicationStatus, MembershipState, OnboardingStep } from '../types.ts';
+import { buildVerifyMeCard, buildNewMemberVerifyPromptCard } from '../bot/embeds.ts';
 import crypto from 'crypto';
 
 export interface TestCaseResult {
@@ -492,6 +493,21 @@ export async function runAllTests(): Promise<{
     return {
       passed: true,
       details: 'Discord Client is fault-tolerant; runs in dual live-gateway & simulator modes.'
+    };
+  });
+
+  // 39. Automatic #verify-me card and welcome prompt generation
+  await runTest(39, 'Automatic #verify-me card and welcome prompt generation', 'Bot', async () => {
+    const card = buildVerifyMeCard();
+    const prompt = buildNewMemberVerifyPromptCard('999999999', 'TestUser');
+
+    const cardHasBtn = card.components[0].components.some((c: any) => c.data.custom_id === 'btn_verify_email');
+    const promptHasBtn = prompt.components[0].components.some((c: any) => c.data.custom_id === 'btn_verify_email');
+    const promptMentionsUser = prompt.content.includes('999999999');
+
+    return {
+      passed: cardHasBtn && promptHasBtn && promptMentionsUser,
+      details: 'Verified that buildVerifyMeCard and buildNewMemberVerifyPromptCard generate the interactive verify email button and correct user tag.'
     };
   });
 

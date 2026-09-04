@@ -45,6 +45,36 @@ export function buildVerifyMeCard() {
   return { embeds: [embed], components: [row] };
 }
 
+// 1b. #VERIFY-ME New Member Welcome Prompt Card (posted automatically upon member join)
+export function buildNewMemberVerifyPromptCard(memberId: string, memberName: string) {
+  const embed = new EmbedBuilder()
+    .setTitle('⚔️ WELCOME TO JOBLESS EMPIRE')
+    .setDescription(
+      `Welcome <@${memberId}> (**${memberName}**)!\n\n` +
+      `Before entering the Empire, verify the email address used during your application.\n\n` +
+      `Your email will be securely matched against our approved whitelist.\n\n` +
+      `• Private modal verification\n` +
+      `• Automatic role assignment\n` +
+      `• Permanent JEMP# sequence allocation\n\n` +
+      `*Click the button below to verify immediately.*`
+    )
+    .setColor(JEMP_COLORS.GOLD_HONOR)
+    .setFooter(JEMP_FOOTER);
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_verify_email')
+      .setLabel('🔐 VERIFY EMAIL')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('btn_how_it_works')
+      .setLabel('ℹ️ HOW IT WORKS')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return { content: `<@${memberId}>`, embeds: [embed], components: [row] };
+}
+
 // 2. Email Verified Embed Card (Step 2: Resume Upload unlocked)
 export function buildEmailVerifiedCard() {
   const embed = new EmbedBuilder()

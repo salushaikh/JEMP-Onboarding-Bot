@@ -261,20 +261,23 @@ export const DeploymentGuide: React.FC = () => {
               <div className="p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl space-y-2">
                 <div className="flex items-center space-x-2 text-amber-400 font-bold">
                   <span className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center text-xs">2</span>
-                  <span>Enable Privileged Gateway Intents</span>
+                  <span>Enable Privileged Gateway Intents (MANDATORY)</span>
                 </div>
                 <div className="text-zinc-300 font-sans space-y-1.5">
-                  <p>In the <strong>Bot</strong> tab, scroll down to <strong>Privileged Gateway Intents</strong> and enable:</p>
+                  <p>In the <strong>Bot</strong> tab, scroll down to <strong>Privileged Gateway Intents</strong> and enable both:</p>
                   <div className="p-2 bg-black/40 border border-zinc-800 rounded space-y-1 text-xs">
-                    <div className="text-emerald-400 flex items-center space-x-1.5">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Server Members Intent (Required to assign Member roles)</span>
+                    <div className="text-emerald-400 flex items-center space-x-1.5 font-bold">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Server Members Intent (Required for guildMemberAdd &amp; auto-posting verification card when user joins)</span>
                     </div>
                     <div className="text-emerald-400 flex items-center space-x-1.5">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Message Content Intent (Required to process verification)</span>
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Message Content Intent (Required to process attachments and commands)</span>
                     </div>
                   </div>
+                  <p className="text-[11px] text-amber-400/90 font-mono">
+                    *If Server Members Intent is off in the Dev Portal, Discord will block join events and the bot won't know when members join!*
+                  </p>
                 </div>
               </div>
 

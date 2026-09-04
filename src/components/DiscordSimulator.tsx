@@ -55,6 +55,40 @@ export const DiscordSimulator: React.FC<DiscordSimulatorProps> = ({ onRefreshDat
   // Ephemeral responses
   const [ephemeralNotice, setEphemeralNotice] = useState<{ title: string; body: string; type?: 'info' | 'success' | 'error' } | null>(null);
 
+  // Live Discord deployment state & simulated joins
+  const [isDeployingCard, setIsDeployingCard] = useState(false);
+  const [deployResult, setDeployResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [simulatedMemberJoins, setSimulatedMemberJoins] = useState<Array<{ id: string; name: string; timestamp: string }>>([
+    { id: 'user_alex_mercer', name: 'Alex Mercer', timestamp: 'Just now' }
+  ]);
+
+  const handleDeployCardToDiscord = async () => {
+    setIsDeployingCard(true);
+    setDeployResult(null);
+    try {
+      const res = await fetch('/api/bot/post-verify-card', { method: 'POST' });
+      const data = await res.json();
+      setDeployResult({
+        success: data.success,
+        message: data.message || (data.success ? 'Verification card posted to Discord!' : data.error || 'Failed to post.')
+      });
+    } catch (err: any) {
+      setDeployResult({ success: false, message: 'Could not connect to bot service.' });
+    } finally {
+      setIsDeployingCard(false);
+    }
+  };
+
+  const handleSimulateMemberJoin = () => {
+    const names = ['Jordan Lee', 'Taylor Smith', 'Morgan Vance', 'Casey Rivera', 'Alex Mercer'];
+    const randomName = names[Math.floor(Math.random() * names.length)];
+    const randomId = `user_${Date.now().toString().slice(-4)}`;
+    setSimulatedMemberJoins(prev => [
+      ...prev,
+      { id: randomId, name: randomName, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+    ]);
+  };
+
   // Applications list for admin channel
   const [applications, setApplications] = useState<any[]>([]);
 
@@ -390,6 +424,46 @@ export const DiscordSimulator: React.FC<DiscordSimulatorProps> = ({ onRefreshDat
           {/* CHANNEL 1: #verify-me */}
           {activeChannel === 'verify-me' && (
             <div className="max-w-2xl mx-auto space-y-6">
+              {/* Live Discord Integration Control Bar */}
+              <div className="p-3.5 bg-zinc-900/90 border border-zinc-800 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                <div className="space-y-0.5">
+                  <div className="flex items-center space-x-2 text-zinc-200 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Automatic Onboarding Event Active (guildMemberAdd)</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400">
+                    Bot auto-posts this verification card to #verify-me whenever an @unverified member joins.
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={handleSimulateMemberJoin}
+                    className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded border border-zinc-700 text-[11px] transition-colors"
+                  >
+                    + Simulate Member Join
+                  </button>
+                  <button
+                    onClick={handleDeployCardToDiscord}
+                    disabled={isDeployingCard}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-zinc-950 font-bold rounded transition-colors text-[11px]"
+                  >
+                    {isDeployingCard ? 'Posting...' : '🚀 Post to Discord Server'}
+                  </button>
+                </div>
+              </div>
+
+              {deployResult && (
+                <div
+                  className={`p-3 rounded-lg border text-xs font-mono ${
+                    deployResult.success
+                      ? 'bg-emerald-950/30 border-emerald-800/60 text-emerald-300'
+                      : 'bg-amber-950/30 border-amber-800/60 text-amber-300'
+                  }`}
+                >
+                  {deployResult.message}
+                </div>
+              )}
+
               {/* Persistent Bot Message Envelope */}
               <div className="flex items-start space-x-3">
                 <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center font-bold text-amber-500 shrink-0">
@@ -575,6 +649,61 @@ export const DiscordSimulator: React.FC<DiscordSimulatorProps> = ({ onRefreshDat
                   )}
                 </div>
               </div>
+
+              {/* Automated Member Join Welcome Cards (Demonstrating guildMemberAdd in action) */}
+              {simulatedMemberJoins.map((mj) => (
+                <div key={mj.id} className="flex items-start space-x-3 pt-2 border-t border-zinc-800/60 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center font-bold text-amber-500 shrink-0">
+                    ⚔️
+                  </div>
+                  <div className="flex-1 space-y-2.5">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm font-bold text-zinc-100 font-mono">Jobless Empire Bot</span>
+                      <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.2 rounded font-mono font-semibold">BOT</span>
+                      <span className="text-[10px] text-zinc-400 font-mono">{mj.timestamp} • Auto-triggered by guildMemberAdd</span>
+                    </div>
+
+                    <div className="bg-[#141418] border-l-4 border-amber-500 rounded-r-lg p-4 border border-zinc-800 space-y-3 shadow-md">
+                      <div className="text-xs font-bold text-amber-400 font-mono">
+                        ⚔️ WELCOME TO JOBLESS EMPIRE
+                      </div>
+                      <div className="text-xs text-zinc-300 font-sans leading-relaxed space-y-1">
+                        <p>
+                          Welcome <span className="text-amber-300 font-mono bg-amber-950/40 px-1 py-0.5 rounded">@{mj.name}</span>!
+                        </p>
+                        <p className="text-zinc-400">
+                          Before entering the Empire, verify the email address used during your application. Your email will be matched against the approved whitelist to allocate your permanent JEMP# sequence.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          onClick={() => {
+                            setShowEmailModal(true);
+                            setEmailVerificationResult(null);
+                          }}
+                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-zinc-950 text-xs font-mono font-bold rounded transition-colors flex items-center space-x-1.5"
+                        >
+                          <span>🔐</span>
+                          <span>VERIFY EMAIL</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEphemeralNotice({
+                              title: 'HOW IT WORKS',
+                              body: '1. Submit application at despair.us\n2. Admin approves application and whitelists email\n3. Join Discord as @Unverified\n4. Verify application email in #verify-me\n5. Upload verified resume (PDF/DOC/DOCX)\n6. Complete community rules & timezone\n7. Receive permanent sequential JEMP# identifier\n8. Synchronized with @Member role',
+                              type: 'info'
+                            });
+                          }}
+                          className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono rounded transition-colors border border-zinc-700"
+                        >
+                          <span>ℹ️ HOW IT WORKS</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 

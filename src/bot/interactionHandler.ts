@@ -26,12 +26,14 @@ import {
 import { runReconciliationScan, executeSafeRepair } from '../services/reconciliationService.ts';
 import { dbManager } from '../database/index.ts';
 import {
+  buildVerifyMeCard,
   buildEmailVerifiedCard,
   buildWelcomeEmpireCard,
   buildProfileManagerCard,
   JEMP_COLORS,
   JEMP_FOOTER
 } from './embeds.ts';
+import { botService } from './client.ts';
 import { maskEmail } from '../security/index.ts';
 import { OnboardingStep } from '../types.ts';
 
@@ -146,6 +148,47 @@ export async function handleButtonInteraction(interaction: ButtonInteraction) {
     await interaction.reply({
       ephemeral: true,
       content: `✓ Current resume (v${res.removedVersion}) has been archived and removed from your active profile. You may upload a new resume at any time.`
+    });
+    return;
+  }
+
+  if (customId === 'btn_upload_resume') {
+    await interaction.reply({
+      ephemeral: true,
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('📄 UPLOAD RESUME — DISCORD INSTRUCTIONS')
+          .setDescription(
+            'To submit your resume:\n\n' +
+            '1. In any command channel or DM, run:\n' +
+            '   `/resume add file:<attach your PDF or DOCX file>`\n\n' +
+            '2. The bot securely calculates your SHA-256 fingerprint, stores the encrypted file in object storage, and updates your profile record.\n\n' +
+            '• Accepted formats: **PDF, DOC, DOCX** (Max 10MB)\n' +
+            '• Stored with cryptographic SHA-256 verification\n' +
+            '• Remains private to Jobless Empire internal systems'
+          )
+          .setColor(JEMP_COLORS.CANVAS_BLACK)
+          .setFooter(JEMP_FOOTER)
+      ]
+    });
+    return;
+  }
+
+  if (customId === 'btn_explore_empire') {
+    await interaction.reply({
+      ephemeral: true,
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('🧭 ENTERING THE JOBLESS EMPIRE')
+          .setDescription(
+            '**Next Steps & Key Resources:**\n\n' +
+            '• **#profile-manager**: View and manage your permanent JEMP# proof-of-work identity, active resume, and timezone settings.\n' +
+            '• **Community Channels**: Introduce yourself, share proof-of-work repositories, and collaborate with verified builders.\n' +
+            '• **Commands**: Run `/membership status` or `/profile status` anytime to view your record.'
+          )
+          .setColor(JEMP_COLORS.GOLD_HONOR)
+          .setFooter(JEMP_FOOTER)
+      ]
     });
     return;
   }
@@ -280,6 +323,36 @@ export async function handleChatCommand(interaction: ChatInputCommandInteraction
       });
       return;
     }
+
+    if (subcommand === 'post-verify-card') {
+      const targetChannel = interaction.options.getChannel('channel');
+      await interaction.deferReply({ ephemeral: true });
+      const res = await botService.postVerifyCardToChannel(targetChannel ? targetChannel.id : undefined);
+      await interaction.editReply({
+        content: res.success ? `✓ ${res.message}` : `⚠️ ${res.message}`
+      });
+      return;
+    }
+
+    if (subcommand === 'post-profile-card') {
+      const targetChannel = interaction.options.getChannel('channel');
+      await interaction.deferReply({ ephemeral: true });
+      const res = await botService.postProfileCardToChannel(targetChannel ? targetChannel.id : undefined);
+      await interaction.editReply({
+        content: res.success ? `✓ ${res.message}` : `⚠️ ${res.message}`
+      });
+      return;
+    }
+  }
+
+  if (commandName === 'verify') {
+    const card = buildVerifyMeCard();
+    await interaction.reply({
+      ephemeral: true,
+      embeds: card.embeds,
+      components: card.components
+    });
+    return;
   }
 
   if (commandName === 'membership') {

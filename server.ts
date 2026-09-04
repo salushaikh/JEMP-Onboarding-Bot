@@ -54,6 +54,27 @@ async function startServer() {
     });
   });
 
+  // Post or refresh official #verify-me Card in Discord
+  app.post('/api/bot/post-verify-card', async (req, res) => {
+    try {
+      const { channelId } = req.body;
+      const result = await botService.postVerifyCardToChannel(channelId);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Auto-check and ensure verification cards across connected Discord guilds
+  app.post('/api/bot/ensure-cards', async (req, res) => {
+    try {
+      const result = await botService.ensureVerifyMeCard();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Dashboard Metrics
   app.get('/api/dashboard', async (req, res) => {
     try {
