@@ -1,0 +1,17 @@
+{
+  "applications": [],
+  "members": [],
+  "onboardingSessions": [],
+  "resumeFiles": [],
+  "timelineEvents": [],
+  "outboxEvents": [],
+  "auditLogs": [],
+  "settings": {},
+  "jempSequence": 0,
+  "permIdConfig": {
+    "prefix": "JEMP",
+    "digitCount": 3,
+    "currentSequence": 0,
+    "isConfigured": false
+  }
+}

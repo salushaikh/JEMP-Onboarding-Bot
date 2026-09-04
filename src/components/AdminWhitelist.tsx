@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { UserPlus, Search, Shield, CheckCircle, XCircle, RotateCcw, Filter, Calendar } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { UserPlus, Search, Shield, CheckCircle, XCircle, RotateCcw, Filter, Calendar, RefreshCw } from 'lucide-react';
 
 interface AdminWhitelistProps {
   onRefreshData: () => void;
+  refreshTrigger?: number;
 }
 
-export const AdminWhitelist: React.FC<AdminWhitelistProps> = ({ onRefreshData }) => {
+export const AdminWhitelist: React.FC<AdminWhitelistProps> = ({ onRefreshData, refreshTrigger }) => {
   const [applications, setApplications] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Add application modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -20,7 +22,8 @@ export const AdminWhitelist: React.FC<AdminWhitelistProps> = ({ onRefreshData })
   const [expiration, setExpiration] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
-  const fetchApps = async () => {
+  const fetchApps = useCallback(async (quiet = false) => {
+    if (!quiet) setIsRefreshing(true);
     try {
       const res = await fetch('/api/applications');
       if (res.ok) {
@@ -29,12 +32,18 @@ export const AdminWhitelist: React.FC<AdminWhitelistProps> = ({ onRefreshData })
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      if (!quiet) setIsRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchApps();
-  }, []);
+    const interval = setInterval(() => {
+      fetchApps(true);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [fetchApps, refreshTrigger]);
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,13 +143,24 @@ export const AdminWhitelist: React.FC<AdminWhitelistProps> = ({ onRefreshData })
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-zinc-950 font-mono text-xs font-bold rounded flex items-center space-x-1.5 transition-colors shrink-0"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>APPROVE APPLICANT (/onboard add)</span>
-        </button>
+        <div className="flex items-center space-x-2 shrink-0">
+          <button
+            onClick={() => { fetchApps(false); onRefreshData(); }}
+            title="Refresh Whitelist Data"
+            className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 rounded font-mono text-xs flex items-center space-x-1.5 transition-colors"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-amber-500' : ''}`} />
+            <span className="hidden sm:inline">REFRESH</span>
+          </button>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-zinc-950 font-mono text-xs font-bold rounded flex items-center space-x-1.5 transition-colors"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>APPROVE APPLICANT (/onboard add)</span>
+          </button>
+        </div>
       </div>
 
       {/* Filters Bar */}

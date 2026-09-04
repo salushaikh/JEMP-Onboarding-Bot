@@ -37,11 +37,125 @@ interface DatabaseState {
 
 const DATA_FILE = path.join(process.cwd(), '.jemp_data.json');
 
+function mapApplicationRow(row: any): Application {
+  return {
+    id: row.id,
+    applicantName: row.applicant_name,
+    email: row.email,
+    emailNormalizedHash: row.email_normalized_hash,
+    status: row.status as ApplicationStatus,
+    notes: row.notes || undefined,
+    expirationDate: row.expiration_date ? new Date(row.expiration_date).toISOString() : undefined,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString()
+  };
+}
+
+function mapMemberRow(row: any): Member {
+  return {
+    id: row.id,
+    jempId: row.jemp_id || undefined,
+    discordUserId: row.discord_user_id || undefined,
+    applicationId: row.application_id,
+    name: row.name,
+    emailNormalizedHash: row.email_normalized_hash,
+    timezone: row.timezone || undefined,
+    membershipStatus: row.membership_status as MembershipState,
+    currentResumeId: row.current_resume_id || undefined,
+    rulesVersionAccepted: row.rules_version_accepted || undefined,
+    rulesAcceptedAt: row.rules_accepted_at ? new Date(row.rules_accepted_at).toISOString() : undefined,
+    safetyAcknowledgedAt: row.safety_acknowledged_at ? new Date(row.safety_acknowledged_at).toISOString() : undefined,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString()
+  };
+}
+
+function mapSessionRow(row: any): OnboardingSession {
+  return {
+    id: row.id,
+    discordUserId: row.discord_user_id,
+    applicationId: row.application_id || undefined,
+    memberId: row.member_id || undefined,
+    currentStep: row.current_step as OnboardingStep,
+    stagedName: row.staged_name || undefined,
+    stagedTimezone: row.staged_timezone || undefined,
+    rulesAccepted: Boolean(row.rules_accepted),
+    safetyAcknowledged: Boolean(row.safety_acknowledged),
+    attemptsCount: Number(row.attempts_count || 0),
+    lastAttemptAt: row.last_attempt_at ? new Date(row.last_attempt_at).toISOString() : undefined,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString()
+  };
+}
+
+function mapResumeRow(row: any): ResumeFile {
+  return {
+    id: row.id,
+    memberId: row.member_id,
+    applicationId: row.application_id,
+    filename: row.filename,
+    mimeType: row.mime_type,
+    fileSize: Number(row.file_size),
+    sha256Hash: row.sha256_hash,
+    storageProvider: (row.storage_provider as StorageProvider) || StorageProvider.LOCAL,
+    storageKey: row.storage_key,
+    version: Number(row.version),
+    status: (row.status as ResumeStatus) || ResumeStatus.CURRENT,
+    dataBase64: row.data_base64 || undefined,
+    uploadedAt: new Date(row.uploaded_at).toISOString(),
+    removedAt: row.removed_at ? new Date(row.removed_at).toISOString() : undefined
+  };
+}
+
+function mapTimelineRow(row: any): TimelineEvent {
+  return {
+    id: row.id,
+    source: row.source || 'onboarding',
+    sourceEventId: row.source_event_id,
+    eventType: row.event_type,
+    memberId: row.member_id || undefined,
+    jempId: row.jemp_id || undefined,
+    description: row.description,
+    metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata || {}),
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    isSyncedToCanonical: true,
+    canonicalSource: 'SHARED_DB'
+  };
+}
+
+function mapAuditRow(row: any): AuditLogEntry {
+  return {
+    id: row.id,
+    actor: row.actor,
+    target: row.target,
+    action: row.action,
+    source: row.source || 'onboarding_bot',
+    relevantIds: typeof row.relevant_ids === 'string' ? JSON.parse(row.relevant_ids) : (row.relevant_ids || {}),
+    safeMetadata: typeof row.safe_metadata === 'string' ? JSON.parse(row.safe_metadata) : (row.safe_metadata || {}),
+    timestamp: row.timestamp instanceof Date ? row.timestamp.toISOString() : String(row.timestamp)
+  };
+}
+
+function mapOutboxRow(row: any): OutboxEvent {
+  return {
+    id: row.id,
+    eventType: row.event_type,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+    payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : (row.payload || {}),
+    status: row.status,
+    retryCount: Number(row.retry_count || 0),
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    dispatchedAt: row.dispatched_at ? (row.dispatched_at instanceof Date ? row.dispatched_at.toISOString() : String(row.dispatched_at)) : undefined
+  };
+}
+
 class DatabaseManager {
   private pgPool: Pool | null = null;
   private isPgConnected: boolean = false;
   private connectionDetails: string = 'Internal Durable Store (.jemp_data.json)';
   private lastCanonicalSync?: string;
+  private initPromise: Promise<void> | null = null;
   private state: DatabaseState = {
     applications: [],
     members: [],
@@ -62,7 +176,13 @@ class DatabaseManager {
 
   constructor() {
     this.loadStateFromFile();
-    this.initPostgres();
+    this.initPromise = this.initPostgres();
+  }
+
+  public async initialize(): Promise<void> {
+    if (this.initPromise) {
+      await this.initPromise;
+    }
   }
 
   private loadStateFromFile() {
@@ -268,8 +388,76 @@ class DatabaseManager {
       `);
       console.log('Canonical JEMP shared schema confirmed on PostgreSQL database.');
       await this.syncLocalToCanonicalTimeline();
+      await this.loadFromPostgres();
     } catch (err) {
       console.warn('PostgreSQL schema verification warning:', err);
+    }
+  }
+
+  public async loadFromPostgres() {
+    if (!this.pgPool || !this.isPgConnected) return;
+    try {
+      console.log('[PostgreSQL] Loading canonical database records into memory cache...');
+      const [appsRes, membersRes, sessionsRes, resumesRes, timelineRes, outboxRes, auditRes, settingsRes] = await Promise.all([
+        this.pgPool.query('SELECT * FROM applications ORDER BY created_at DESC'),
+        this.pgPool.query('SELECT * FROM members ORDER BY created_at DESC'),
+        this.pgPool.query('SELECT * FROM onboarding_sessions'),
+        this.pgPool.query('SELECT * FROM resume_files ORDER BY uploaded_at DESC'),
+        this.pgPool.query('SELECT * FROM timeline_events ORDER BY created_at DESC'),
+        this.pgPool.query('SELECT * FROM outbox_events ORDER BY created_at DESC'),
+        this.pgPool.query('SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 200'),
+        this.pgPool.query('SELECT key, value FROM settings')
+      ]);
+
+      if (appsRes?.rows) {
+        this.state.applications = appsRes.rows.map(mapApplicationRow);
+      }
+      if (membersRes?.rows) {
+        this.state.members = membersRes.rows.map(mapMemberRow);
+      }
+      if (sessionsRes?.rows) {
+        this.state.onboardingSessions = sessionsRes.rows.map(mapSessionRow);
+      }
+      if (resumesRes?.rows) {
+        this.state.resumeFiles = resumesRes.rows.map(mapResumeRow);
+      }
+      if (timelineRes?.rows) {
+        this.state.timelineEvents = timelineRes.rows.map(mapTimelineRow);
+      }
+      if (outboxRes?.rows) {
+        this.state.outboxEvents = outboxRes.rows.map(mapOutboxRow);
+      }
+      if (auditRes?.rows) {
+        this.state.auditLogs = auditRes.rows.map(mapAuditRow);
+      }
+      if (settingsRes?.rows) {
+        for (const row of settingsRes.rows) {
+          this.state.settings[row.key] = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+        }
+      }
+
+      // Check max JEMP sequence
+      let maxSeq = 0;
+      for (const m of this.state.members) {
+        if (m.jempId) {
+          const match = m.jempId.match(/\d+/);
+          if (match) {
+            const num = parseInt(match[0], 10);
+            if (num > maxSeq) maxSeq = num;
+          }
+        }
+      }
+      if (maxSeq > (this.state.jempSequence || 0)) {
+        this.state.jempSequence = maxSeq;
+        if (this.state.permIdConfig) {
+          this.state.permIdConfig.currentSequence = maxSeq;
+        }
+      }
+
+      this.persistState();
+      console.log(`[PostgreSQL] Canonical records loaded: ${this.state.applications.length} applications, ${this.state.members.length} members, ${this.state.resumeFiles.length} resumes.`);
+    } catch (err) {
+      console.warn('[PostgreSQL] Initial data load warning:', err);
     }
   }
 
@@ -469,13 +657,27 @@ class DatabaseManager {
   // e.g. JEMP#001, JEMP#0001, JOBLESS#001 based on admin's one-time setup
   public async allocateNextJempId(): Promise<string> {
     const config = this.getPermIdConfig();
-    config.currentSequence += 1;
-    this.state.jempSequence = config.currentSequence;
+    let nextSeq = (config.currentSequence || 0) + 1;
+
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const seqRes = await this.pgPool.query(`SELECT nextval('jemp_member_seq') as next_val`);
+        if (seqRes.rows && seqRes.rows[0]) {
+          const pgSeq = parseInt(seqRes.rows[0].next_val, 10);
+          nextSeq = Math.max(nextSeq, pgSeq);
+        }
+      } catch (err) {
+        console.warn('PostgreSQL jemp_member_seq fallback:', err);
+      }
+    }
+
+    config.currentSequence = nextSeq;
+    this.state.jempSequence = nextSeq;
     this.state.permIdConfig = config;
 
     const prefix = (config.prefix || 'JEMP').toUpperCase().trim();
     const digits = Math.min(Math.max(config.digitCount || 3, 3), 5);
-    const padded = String(config.currentSequence).padStart(digits, '0');
+    const padded = String(nextSeq).padStart(digits, '0');
     const permId = `${prefix}#${padded}`;
 
     this.persistState();
@@ -484,10 +686,38 @@ class DatabaseManager {
 
   // --- APPLICATIONS ---
   public async findApplicationByEmailHash(hash: string): Promise<Application | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM applications WHERE email_normalized_hash = $1 LIMIT 1', [hash]);
+        if (res.rows.length > 0) {
+          const app = mapApplicationRow(res.rows[0]);
+          const idx = this.state.applications.findIndex(a => a.id === app.id);
+          if (idx >= 0) this.state.applications[idx] = app;
+          else this.state.applications.push(app);
+          return app;
+        }
+      } catch (err) {
+        console.warn('PostgreSQL findApplicationByEmailHash fallback:', err);
+      }
+    }
     return this.state.applications.find(a => a.emailNormalizedHash === hash) || null;
   }
 
   public async findApplicationById(id: string): Promise<Application | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM applications WHERE id = $1 LIMIT 1', [id]);
+        if (res.rows.length > 0) {
+          const app = mapApplicationRow(res.rows[0]);
+          const idx = this.state.applications.findIndex(a => a.id === app.id);
+          if (idx >= 0) this.state.applications[idx] = app;
+          else this.state.applications.push(app);
+          return app;
+        }
+      } catch (err) {
+        console.warn('PostgreSQL findApplicationById fallback:', err);
+      }
+    }
     return this.state.applications.find(a => a.id === id) || null;
   }
 
@@ -533,23 +763,89 @@ class DatabaseManager {
   }
 
   public async listApplications(): Promise<Application[]> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM applications ORDER BY created_at DESC');
+        const apps = res.rows.map(mapApplicationRow);
+        this.state.applications = apps;
+        return apps;
+      } catch (err) {
+        console.warn('PostgreSQL listApplications fallback:', err);
+      }
+    }
     return [...this.state.applications];
   }
 
   // --- MEMBERS ---
   public async findMemberByDiscordId(discordUserId: string): Promise<Member | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM members WHERE discord_user_id = $1 LIMIT 1', [discordUserId]);
+        if (res.rows.length > 0) {
+          const m = mapMemberRow(res.rows[0]);
+          const idx = this.state.members.findIndex(x => x.id === m.id);
+          if (idx >= 0) this.state.members[idx] = m;
+          else this.state.members.push(m);
+          return m;
+        }
+      } catch (err) {
+        console.warn('PostgreSQL findMemberByDiscordId fallback:', err);
+      }
+    }
     return this.state.members.find(m => m.discordUserId === discordUserId) || null;
   }
 
   public async findMemberByApplicationId(applicationId: string): Promise<Member | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM members WHERE application_id = $1 LIMIT 1', [applicationId]);
+        if (res.rows.length > 0) {
+          const m = mapMemberRow(res.rows[0]);
+          const idx = this.state.members.findIndex(x => x.id === m.id);
+          if (idx >= 0) this.state.members[idx] = m;
+          else this.state.members.push(m);
+          return m;
+        }
+      } catch (err) {
+        console.warn('PostgreSQL findMemberByApplicationId fallback:', err);
+      }
+    }
     return this.state.members.find(m => m.applicationId === applicationId) || null;
   }
 
   public async findMemberByJempId(jempId: string): Promise<Member | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM members WHERE jemp_id = $1 LIMIT 1', [jempId]);
+        if (res.rows.length > 0) {
+          const m = mapMemberRow(res.rows[0]);
+          const idx = this.state.members.findIndex(x => x.id === m.id);
+          if (idx >= 0) this.state.members[idx] = m;
+          else this.state.members.push(m);
+          return m;
+        }
+      } catch (err) {
+        console.warn('PostgreSQL findMemberByJempId fallback:', err);
+      }
+    }
     return this.state.members.find(m => m.jempId === jempId) || null;
   }
 
   public async findMemberById(id: string): Promise<Member | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM members WHERE id = $1 LIMIT 1', [id]);
+        if (res.rows.length > 0) {
+          const m = mapMemberRow(res.rows[0]);
+          const idx = this.state.members.findIndex(x => x.id === m.id);
+          if (idx >= 0) this.state.members[idx] = m;
+          else this.state.members.push(m);
+          return m;
+        }
+      } catch (err) {
+        console.warn('PostgreSQL findMemberById fallback:', err);
+      }
+    }
     return this.state.members.find(m => m.id === id) || null;
   }
 
@@ -603,15 +899,76 @@ class DatabaseManager {
   }
 
   public async listMembers(): Promise<Member[]> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM members ORDER BY created_at DESC');
+        const members = res.rows.map(mapMemberRow);
+        this.state.members = members;
+        return members;
+      } catch (err) {
+        console.warn('PostgreSQL listMembers fallback:', err);
+      }
+    }
     return [...this.state.members];
   }
 
   // --- ONBOARDING SESSIONS ---
   public async getOnboardingSession(discordUserId: string): Promise<OnboardingSession | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM onboarding_sessions WHERE discord_user_id = $1 LIMIT 1', [discordUserId]);
+        if (res.rows.length > 0) {
+          const s = mapSessionRow(res.rows[0]);
+          const idx = this.state.onboardingSessions.findIndex(x => x.discordUserId === s.discordUserId);
+          if (idx >= 0) this.state.onboardingSessions[idx] = s;
+          else this.state.onboardingSessions.push(s);
+          return s;
+        }
+      } catch (err) {
+        console.warn('PostgreSQL getOnboardingSession fallback:', err);
+      }
+    }
     return this.state.onboardingSessions.find(s => s.discordUserId === discordUserId) || null;
   }
 
   public async saveOnboardingSession(session: OnboardingSession): Promise<OnboardingSession> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `INSERT INTO onboarding_sessions (id, discord_user_id, application_id, member_id, current_step, staged_name, staged_timezone, rules_accepted, safety_acknowledged, attempts_count, last_attempt_at, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           ON CONFLICT (discord_user_id) DO UPDATE SET
+             application_id = EXCLUDED.application_id,
+             member_id = EXCLUDED.member_id,
+             current_step = EXCLUDED.current_step,
+             staged_name = EXCLUDED.staged_name,
+             staged_timezone = EXCLUDED.staged_timezone,
+             rules_accepted = EXCLUDED.rules_accepted,
+             safety_acknowledged = EXCLUDED.safety_acknowledged,
+             attempts_count = EXCLUDED.attempts_count,
+             last_attempt_at = EXCLUDED.last_attempt_at,
+             updated_at = EXCLUDED.updated_at`,
+          [
+            session.id,
+            session.discordUserId,
+            session.applicationId || null,
+            session.memberId || null,
+            session.currentStep,
+            session.stagedName || null,
+            session.stagedTimezone || null,
+            session.rulesAccepted || false,
+            session.safetyAcknowledged || false,
+            session.attemptsCount || 0,
+            session.lastAttemptAt || null,
+            session.createdAt,
+            session.updatedAt
+          ]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL saveOnboardingSession fallback:', err);
+      }
+    }
+
     const idx = this.state.onboardingSessions.findIndex(s => s.discordUserId === session.discordUserId);
     if (idx >= 0) {
       this.state.onboardingSessions[idx] = session;
@@ -624,12 +981,32 @@ class DatabaseManager {
 
   // --- RESUME FILES ---
   public async listResumesForMember(memberId: string): Promise<ResumeFile[]> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM resume_files WHERE member_id = $1 ORDER BY version DESC', [memberId]);
+        if (res.rows.length > 0) {
+          return res.rows.map(mapResumeRow);
+        }
+      } catch (err) {
+        console.warn('PostgreSQL listResumesForMember fallback:', err);
+      }
+    }
     return this.state.resumeFiles
       .filter(r => r.memberId === memberId)
       .sort((a, b) => b.version - a.version);
   }
 
   public async getCurrentResumeForMember(memberId: string): Promise<ResumeFile | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM resume_files WHERE member_id = $1 AND status = $2 LIMIT 1', [memberId, ResumeStatus.CURRENT]);
+        if (res.rows.length > 0) {
+          return mapResumeRow(res.rows[0]);
+        }
+      } catch (err) {
+        console.warn('PostgreSQL getCurrentResumeForMember fallback:', err);
+      }
+    }
     return this.state.resumeFiles.find(r => r.memberId === memberId && r.status === ResumeStatus.CURRENT) || null;
   }
 
@@ -805,6 +1182,16 @@ class DatabaseManager {
   }
 
   public async listOutboxEvents(): Promise<OutboxEvent[]> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM outbox_events ORDER BY created_at DESC');
+        const events = res.rows.map(mapOutboxRow);
+        this.state.outboxEvents = events;
+        return events;
+      } catch (err) {
+        console.warn('PostgreSQL listOutboxEvents fallback:', err);
+      }
+    }
     return [...this.state.outboxEvents];
   }
 
@@ -838,11 +1225,37 @@ class DatabaseManager {
   }
 
   public async listAuditLogs(limit = 100): Promise<AuditLogEntry[]> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT $1', [limit]);
+        const logs = res.rows.map(mapAuditRow);
+        this.state.auditLogs = logs;
+        return logs;
+      } catch (err) {
+        console.warn('PostgreSQL listAuditLogs fallback:', err);
+      }
+    }
     return this.state.auditLogs.slice(0, limit);
   }
 
   // --- RESUME FILES (LOCAL DATABASE STORAGE) ---
   public async listResumeFiles(memberId?: string): Promise<ResumeFile[]> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        let query = 'SELECT * FROM resume_files ORDER BY uploaded_at DESC';
+        let params: any[] = [];
+        if (memberId) {
+          query = 'SELECT * FROM resume_files WHERE member_id = $1 ORDER BY uploaded_at DESC';
+          params = [memberId];
+        }
+        const res = await this.pgPool.query(query, params);
+        const resumes = res.rows.map(mapResumeRow);
+        if (!memberId) this.state.resumeFiles = resumes;
+        return resumes;
+      } catch (err) {
+        console.warn('PostgreSQL listResumeFiles fallback:', err);
+      }
+    }
     if (memberId) {
       return this.state.resumeFiles.filter(r => r.memberId === memberId);
     }
@@ -850,6 +1263,16 @@ class DatabaseManager {
   }
 
   public async findResumeFileById(id: string): Promise<ResumeFile | null> {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query('SELECT * FROM resume_files WHERE id = $1 LIMIT 1', [id]);
+        if (res.rows.length > 0) {
+          return mapResumeRow(res.rows[0]);
+        }
+      } catch (err) {
+        console.warn('PostgreSQL findResumeFileById fallback:', err);
+      }
+    }
     return this.state.resumeFiles.find(r => r.id === id) || null;
   }
 
@@ -860,6 +1283,13 @@ class DatabaseManager {
 
   public setSetting(key: string, value: any) {
     this.state.settings[key] = value;
+    if (this.isPgConnected && this.pgPool) {
+      this.pgPool.query(
+        `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+        [key, JSON.stringify(value)]
+      ).catch(err => console.warn('PostgreSQL setSetting fallback:', err));
+    }
     this.persistState();
   }
 
@@ -868,8 +1298,7 @@ class DatabaseManager {
     const now = new Date().toISOString();
     
     // Clear any previous demo entries first to keep clean
-    this.state.applications = this.state.applications.filter(a => !a.id.includes('DEMO'));
-    this.state.members = this.state.members.filter(m => !m.applicationId.includes('DEMO'));
+    await this.clearDemoData();
 
     const demoApp1: Application = {
       id: 'APP#DEMO-001',
@@ -904,7 +1333,9 @@ class DatabaseManager {
       updatedAt: now
     };
 
-    this.state.applications.push(demoApp1, demoApp2, demoApp3);
+    await this.saveApplication(demoApp1);
+    await this.saveApplication(demoApp2);
+    await this.saveApplication(demoApp3);
 
     // Also seed a pre-existing Active Member JEMP#001 for demonstration
     const activeMemberId = crypto.randomUUID();
@@ -924,7 +1355,7 @@ class DatabaseManager {
       updatedAt: now
     };
 
-    this.state.applications.push({
+    await this.saveApplication({
       id: 'APP#DEMO-FOUNDER',
       applicantName: 'Elena Rostova',
       email: 'founder@example.invalid',
@@ -934,11 +1365,6 @@ class DatabaseManager {
       createdAt: now,
       updatedAt: now
     });
-
-    this.state.members.push(demoMember);
-    if (this.state.jempSequence < 1) {
-      this.state.jempSequence = 1;
-    }
 
     const demoResume: ResumeFile = {
       id: crypto.randomUUID(),
@@ -955,10 +1381,15 @@ class DatabaseManager {
       uploadedAt: now
     };
 
+    await this.saveResumeFile(demoResume);
     demoMember.currentResumeId = demoResume.id;
-    this.state.resumeFiles.push(demoResume);
+    await this.saveMember(demoMember);
 
-    this.state.timelineEvents.push({
+    if (this.state.jempSequence < 1) {
+      this.state.jempSequence = 1;
+    }
+
+    await this.saveTimelineEvent({
       id: crypto.randomUUID(),
       source: 'onboarding',
       sourceEventId: `onboarding:${activeMemberId}:membership_activated`,
@@ -969,7 +1400,7 @@ class DatabaseManager {
       createdAt: now
     });
 
-    this.state.auditLogs.push({
+    await this.saveAuditLog({
       id: crypto.randomUUID(),
       actor: 'system',
       target: 'demo_environment',
@@ -990,6 +1421,18 @@ class DatabaseManager {
     this.state.onboardingSessions = this.state.onboardingSessions.filter(s => !s.applicationId?.includes('DEMO'));
     this.state.resumeFiles = this.state.resumeFiles.filter(r => !r.applicationId?.includes('DEMO'));
     this.state.timelineEvents = this.state.timelineEvents.filter(t => !t.sourceEventId?.includes('DEMO'));
+
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM timeline_events WHERE source_event_id LIKE '%DEMO%' OR jemp_id = 'JEMP#001'`);
+        await this.pgPool.query(`DELETE FROM resume_files WHERE application_id LIKE '%DEMO%'`);
+        await this.pgPool.query(`DELETE FROM onboarding_sessions WHERE application_id LIKE '%DEMO%'`);
+        await this.pgPool.query(`DELETE FROM members WHERE application_id LIKE '%DEMO%'`);
+        await this.pgPool.query(`DELETE FROM applications WHERE id LIKE '%DEMO%'`);
+      } catch (err) {
+        console.warn('PostgreSQL clearDemoData fallback:', err);
+      }
+    }
     
     this.state.auditLogs.unshift({
       id: crypto.randomUUID(),

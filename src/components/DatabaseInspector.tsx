@@ -18,9 +18,10 @@ import { PermIdSetupModal } from './PermIdSetupModal.tsx';
 
 interface DatabaseInspectorProps {
   onRefreshData: () => void;
+  refreshTrigger?: number;
 }
 
-export const DatabaseInspector: React.FC<DatabaseInspectorProps> = ({ onRefreshData }) => {
+export const DatabaseInspector: React.FC<DatabaseInspectorProps> = ({ onRefreshData, refreshTrigger }) => {
   const [subTab, setSubTab] = useState<'members' | 'resumes' | 'timeline' | 'outbox' | 'audit'>('members');
   const [members, setMembers] = useState<any[]>([]);
   const [resumes, setResumes] = useState<any[]>([]);
@@ -35,8 +36,8 @@ export const DatabaseInspector: React.FC<DatabaseInspectorProps> = ({ onRefreshD
   const [loading, setLoading] = useState(false);
   const [showPermModal, setShowPermModal] = useState(false);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const [mRes, rRes, tRes, oRes, aRes, hRes, pRes, archRes] = await Promise.all([
         fetch('/api/members'),
@@ -63,7 +64,7 @@ export const DatabaseInspector: React.FC<DatabaseInspectorProps> = ({ onRefreshD
     } catch (e) {
       console.error(e);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   };
 
@@ -88,7 +89,11 @@ export const DatabaseInspector: React.FC<DatabaseInspectorProps> = ({ onRefreshD
 
   useEffect(() => {
     fetchData();
-  }, []);
+    const interval = setInterval(() => {
+      fetchData(true);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [refreshTrigger]);
 
   const handleMemberAction = async (memberId: string, action: 'suspend' | 'restore' | 'terminate') => {
     let reason = '';

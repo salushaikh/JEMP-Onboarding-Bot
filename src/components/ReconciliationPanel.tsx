@@ -3,9 +3,10 @@ import { RefreshCw, AlertTriangle, CheckCircle, ShieldCheck, Wrench } from 'luci
 
 interface ReconciliationPanelProps {
   onRefreshData: () => void;
+  refreshTrigger?: number;
 }
 
-export const ReconciliationPanel: React.FC<ReconciliationPanelProps> = ({ onRefreshData }) => {
+export const ReconciliationPanel: React.FC<ReconciliationPanelProps> = ({ onRefreshData, refreshTrigger }) => {
   const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [repairingId, setRepairingId] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export const ReconciliationPanel: React.FC<ReconciliationPanelProps> = ({ onRefr
 
   useEffect(() => {
     runScan();
-  }, []);
+  }, [refreshTrigger]);
 
   const handleRepair = async (anomalyId: string) => {
     setRepairingId(anomalyId);

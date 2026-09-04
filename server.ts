@@ -33,11 +33,8 @@ async function startServer() {
   app.use(express.json({ limit: '20mb' }));
   app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
-  // Initialize demo data if fresh instance
-  const existingApps = await dbManager.listApplications();
-  if (existingApps.length === 0) {
-    await dbManager.seedDemoData();
-  }
+  // Ensure database initialization has completed before serving requests
+  await dbManager.initialize();
 
   // --- API ROUTES ---
 

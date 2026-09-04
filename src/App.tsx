@@ -222,9 +222,9 @@ export default function App() {
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {activeTab === 'simulator' && <DiscordSimulator onRefreshData={triggerRefresh} />}
-        {activeTab === 'whitelist' && <AdminWhitelist onRefreshData={triggerRefresh} />}
-        {activeTab === 'database' && <DatabaseInspector onRefreshData={triggerRefresh} />}
-        {activeTab === 'reconcile' && <ReconciliationPanel onRefreshData={triggerRefresh} />}
+        {activeTab === 'whitelist' && <AdminWhitelist onRefreshData={triggerRefresh} refreshTrigger={refreshTrigger} />}
+        {activeTab === 'database' && <DatabaseInspector onRefreshData={triggerRefresh} refreshTrigger={refreshTrigger} />}
+        {activeTab === 'reconcile' && <ReconciliationPanel onRefreshData={triggerRefresh} refreshTrigger={refreshTrigger} />}
         {activeTab === 'tests' && <TestSuiteRunner />}
         {activeTab === 'terminal' && <SlashCommandConsole onRefreshData={triggerRefresh} />}
         {activeTab === 'guide' && <DeploymentGuide />}
