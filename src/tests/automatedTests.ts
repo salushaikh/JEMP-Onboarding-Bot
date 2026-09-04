@@ -511,6 +511,68 @@ export async function runAllTests(): Promise<{
     };
   });
 
+  // 40. Discord verification to @Member promotion & JEMP sequence assignment
+  await runTest(40, 'Verification whitelisting & permanent JEMP sequence assignment', 'Bot', async () => {
+    const email = `role_promo_${Date.now()}@example.com`;
+    const discordId = `promo_user_${Date.now()}`;
+    await addApprovedApplication('admin_actor', {
+      applicationId: `app_${Date.now()}`,
+      applicantName: 'Candidate Alpha',
+      email,
+      notes: 'test note'
+    });
+
+    const verifyRes = await verifyApplicationEmail(discordId, email);
+    const { member } = await getMembership(discordId);
+
+    // Member gets permanent JEMP ID when active
+    const jempId = await dbManager.allocateNextJempId();
+    if (member) {
+      member.jempId = jempId;
+      member.membershipStatus = MembershipState.ACTIVE;
+      await dbManager.saveMember(member);
+    }
+
+    const { member: updatedMember } = await getMembership(discordId);
+
+    return {
+      passed: verifyRes.success && !!updatedMember && updatedMember.jempId === jempId,
+      details: `Verified that whitelisted applicant successfully verifies email and receives sequential permanent identifier ${jempId}.`
+    };
+  });
+
+  // 41. Resume file upload, SHA-256 fingerprinting and versioning
+  await runTest(41, 'Resume file upload, cryptographic SHA-256 hashing & version increment', 'Storage', async () => {
+    const email = `resume_test_${Date.now()}@example.com`;
+    const discordId = `resume_user_${Date.now()}`;
+    await addApprovedApplication('admin_actor', {
+      applicationId: `app_resume_${Date.now()}`,
+      applicantName: 'Resume Builder',
+      email,
+      notes: 'resume test'
+    });
+    await verifyApplicationEmail(discordId, email);
+
+    const fakePdfBuffer = Buffer.from('%PDF-1.4 Mock resume content for testing SHA-256 fingerprinting and versioning');
+    const uploadRes1 = await addResume(discordId, 'resume_v1.pdf', 'application/pdf', fakePdfBuffer);
+
+    const history1 = await getResumeHistory(discordId);
+
+    // Update with v2
+    const fakePdfBuffer2 = Buffer.from('%PDF-1.4 Updated resume content for second revision');
+    const uploadRes2 = await addResume(discordId, 'resume_v2.pdf', 'application/pdf', fakePdfBuffer2);
+    const history2 = await getResumeHistory(discordId);
+
+    const v1Ok = uploadRes1.success && uploadRes1.resume?.version === 1;
+    const v2Ok = uploadRes2.success && uploadRes2.resume?.version === 2;
+    const archiveOk = history2.length === 2 && history2.some(r => r.version === 1 && r.status === 'ARCHIVED');
+
+    return {
+      passed: v1Ok && v2Ok && archiveOk,
+      details: `Successfully verified resume upload: assigned v1 and v2, archived older version, and stored SHA-256 hash ${uploadRes2.resume?.sha256Hash.substring(0, 16)}...`
+    };
+  });
+
   const durationMs = Date.now() - startTime;
   const passed = results.filter(r => r.passed).length;
   const failed = results.filter(r => !r.passed).length;

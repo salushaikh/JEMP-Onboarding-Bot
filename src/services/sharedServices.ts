@@ -358,15 +358,34 @@ export async function addResume(
   mimeType: string,
   buffer: Buffer
 ): Promise<{ success: boolean; error?: string; resume?: ResumeFile }> {
-  const session = await dbManager.getOnboardingSession(discordUserId);
-  const member = await dbManager.findMemberByDiscordId(discordUserId);
+  let member = await dbManager.findMemberByDiscordId(discordUserId);
+  let session = await dbManager.getOnboardingSession(discordUserId);
 
-  // CRITICAL RULE: Resume upload step MUST NOT appear or be accepted before successful email verification!
-  if (!session || !member || (session.currentStep === OnboardingStep.EMAIL_REQUIRED && !member.emailNormalizedHash)) {
+  // CRITICAL RULE: Email verification must be completed before submitting a resume!
+  if (!member || !member.emailNormalizedHash) {
     return {
       success: false,
-      error: 'Unauthorized: Email verification must be completed before submitting a resume.'
+      error: 'Unauthorized: Email verification must be completed in #verify-me before submitting a resume.'
     };
+  }
+
+  if (!session) {
+    const now = new Date().toISOString();
+    session = {
+      id: crypto.randomUUID(),
+      discordUserId,
+      applicationId: member.applicationId,
+      memberId: member.id,
+      currentStep: OnboardingStep.RESUME_REQUIRED,
+      stagedName: member.name,
+      rulesAccepted: true,
+      safetyAcknowledged: true,
+      attemptsCount: 1,
+      lastAttemptAt: now,
+      createdAt: now,
+      updatedAt: now
+    };
+    await dbManager.saveOnboardingSession(session);
   }
 
   // Validate File

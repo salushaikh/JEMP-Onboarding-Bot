@@ -196,6 +196,72 @@ class BotService {
   }
 
   // -------------------------------------------------------------
+  // ROLE PROMOTION: @unverified -> @Member
+  // -------------------------------------------------------------
+  public async promoteMemberFromUnverifiedToMember(
+    guild: Guild,
+    discordUserId: string
+  ): Promise<{ success: boolean; unverifiedRemoved: boolean; memberAdded: boolean; error?: string }> {
+    try {
+      const config = getConfig();
+      const member = await guild.members.fetch(discordUserId).catch(() => null);
+      if (!member) {
+        return { success: false, unverifiedRemoved: false, memberAdded: false, error: 'Member not found in guild.' };
+      }
+
+      // 1. Locate @unverified role
+      let unverifiedRole = config.unverifiedRoleId
+        ? guild.roles.cache.get(config.unverifiedRoleId)
+        : null;
+      if (!unverifiedRole) {
+        unverifiedRole = guild.roles.cache.find(
+          r => r.name.toLowerCase() === 'unverified' || r.name.toLowerCase().includes('unverified')
+        ) || null;
+      }
+
+      // 2. Locate @Member role
+      let memberRole = config.memberRoleId
+        ? guild.roles.cache.get(config.memberRoleId)
+        : null;
+      if (!memberRole) {
+        memberRole = guild.roles.cache.find(
+          r => r.name.toLowerCase() === 'member' || r.name.toLowerCase() === '@member'
+        ) || null;
+      }
+
+      let unverifiedRemoved = false;
+      let memberAdded = false;
+
+      // Remove @unverified
+      if (unverifiedRole && member.roles.cache.has(unverifiedRole.id)) {
+        await member.roles.remove(unverifiedRole).catch(err => {
+          console.warn(`[Discord Bot] Could not remove unverified role: ${err.message}`);
+        });
+        unverifiedRemoved = true;
+        console.log(`[Discord Bot] Removed @Unverified role from ${member.user.tag}`);
+      }
+
+      // Add @Member
+      if (memberRole) {
+        if (!member.roles.cache.has(memberRole.id)) {
+          await member.roles.add(memberRole).catch(err => {
+            console.warn(`[Discord Bot] Could not add member role: ${err.message}`);
+          });
+          memberAdded = true;
+          console.log(`[Discord Bot] Added @Member role to ${member.user.tag}`);
+        }
+      } else {
+        console.warn(`[Discord Bot] Member role not found in guild "${guild.name}". Create a role named "Member" or configure MEMBER_ROLE_ID.`);
+      }
+
+      return { success: true, unverifiedRemoved, memberAdded };
+    } catch (err: any) {
+      console.error(`[Discord Bot] Error in promoteMemberFromUnverifiedToMember:`, err);
+      return { success: false, unverifiedRemoved: false, memberAdded: false, error: err.message };
+    }
+  }
+
+  // -------------------------------------------------------------
   // VERIFICATION CARD MAINTENANCE & POSTING
   // -------------------------------------------------------------
   public async ensureVerifyMeCardsAcrossGuilds() {
