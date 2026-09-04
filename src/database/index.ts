@@ -109,6 +109,9 @@ class DatabaseManager {
           connectionTimeoutMillis: 5000,
           ssl: ssl ? { rejectUnauthorized: false } : undefined
         });
+        this.pgPool.on('error', (poolErr) => {
+          console.warn('[PostgreSQL Pool Background Warning]:', poolErr.message);
+        });
         const client = await this.pgPool.connect();
         client.release();
         this.isPgConnected = true;
@@ -126,6 +129,9 @@ class DatabaseManager {
           connectionTimeoutMillis: 5000,
           ssl: ssl ? { rejectUnauthorized: false } : undefined
         });
+        this.pgPool.on('error', (poolErr) => {
+          console.warn('[PostgreSQL Pool Background Warning]:', poolErr.message);
+        });
         const client = await this.pgPool.connect();
         client.release();
         this.isPgConnected = true;
@@ -139,6 +145,12 @@ class DatabaseManager {
       console.warn(`PostgreSQL connection attempt to ${host || 'localhost'}:${port} failed (${err.message}). Using local compatibility layer.`);
       this.isPgConnected = false;
       this.connectionDetails = 'Local Compatibility Buffer (PostgreSQL unavailable)';
+      if (this.pgPool) {
+        try {
+          await this.pgPool.end();
+        } catch { }
+        this.pgPool = null;
+      }
     }
   }
 

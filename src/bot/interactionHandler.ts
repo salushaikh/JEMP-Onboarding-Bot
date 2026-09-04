@@ -43,25 +43,14 @@ export async function handleButtonInteraction(interaction: ButtonInteraction) {
   const customId = interaction.customId;
 
   if (customId === 'btn_verify_email') {
-    // Only users with @unverified role need verification; if already a verified member:
-    if (interaction.inGuild() && interaction.member) {
-      const config = getConfig();
-      const memberRoles = (interaction.member as any).roles?.cache;
-      if (memberRoles) {
-        const isMember = memberRoles.some(
-          (r: any) => r.id === config.memberRoleId || r.name.toLowerCase() === 'member'
-        );
-        const isUnverified = memberRoles.some(
-          (r: any) => r.id === config.unverifiedRoleId || r.name.toLowerCase() === 'unverified'
-        );
-        if (isMember && !isUnverified) {
-          await interaction.reply({
-            ephemeral: true,
-            content: '✓ You are already a verified **@Member** of Jobless Empire. Your identity is active and your onboarding is complete!'
-          });
-          return;
-        }
-      }
+    // If user is already verified in the database with their email and JEMP#, confirm their identity
+    const { member: dbMember } = await getMembership(interaction.user.id);
+    if (dbMember && dbMember.emailNormalizedHash && dbMember.jempId) {
+      await interaction.reply({
+        ephemeral: true,
+        content: `✓ You are already a verified **@Member** of Jobless Empire (Identity: **${dbMember.jempId}**).\nYour identity is active and your onboarding is complete! Use \`/resume add\` or \`/profile status\` to manage your record.`
+      });
+      return;
     }
 
     // Open private modal
@@ -394,25 +383,13 @@ export async function handleChatCommand(interaction: ChatInputCommandInteraction
   }
 
   if (commandName === 'verify') {
-    // Only users with @unverified role need verification; if already a member:
-    if (interaction.inGuild() && interaction.member) {
-      const config = getConfig();
-      const memberRoles = (interaction.member as any).roles?.cache;
-      if (memberRoles) {
-        const isMember = memberRoles.some(
-          (r: any) => r.id === config.memberRoleId || r.name.toLowerCase() === 'member'
-        );
-        const isUnverified = memberRoles.some(
-          (r: any) => r.id === config.unverifiedRoleId || r.name.toLowerCase() === 'unverified'
-        );
-        if (isMember && !isUnverified) {
-          await interaction.reply({
-            ephemeral: true,
-            content: '✓ You are already a verified **@Member** of Jobless Empire. Your identity is active and your onboarding is complete!'
-          });
-          return;
-        }
-      }
+    const { member: dbMember } = await getMembership(interaction.user.id);
+    if (dbMember && dbMember.emailNormalizedHash && dbMember.jempId) {
+      await interaction.reply({
+        ephemeral: true,
+        content: `✓ You are already a verified **@Member** of Jobless Empire (Identity: **${dbMember.jempId}**).\nYour identity is active and your onboarding is complete! Use \`/resume add\` or \`/profile status\` to manage your record.`
+      });
+      return;
     }
 
     const card = buildVerifyMeCard();
@@ -430,6 +407,38 @@ export async function handleChatCommand(interaction: ChatInputCommandInteraction
     await interaction.deferReply({ ephemeral: true });
 
     if (subcommand === 'add' || subcommand === 'update') {
+      // Ensure established @Member or Administrator on the Discord guild has an active member record
+      let { member: currentMember } = await getMembership(interaction.user.id);
+      if (!currentMember && interaction.inGuild() && interaction.member) {
+        const config = getConfig();
+        const memberObj = interaction.member as any;
+        const isMemberOrAdmin =
+          memberObj?.roles?.cache?.some(
+            (r: any) =>
+              r.id === config.memberRoleId ||
+              r.name?.toLowerCase() === 'member' ||
+              r.name?.toLowerCase() === '@member'
+          ) || memberObj?.permissions?.has?.('Administrator');
+
+        if (isMemberOrAdmin) {
+          const jempId = await dbManager.allocateNextJempId();
+          const now = new Date().toISOString();
+          currentMember = {
+            id: crypto.randomUUID(),
+            applicationId: 'guild_member_sync',
+            discordUserId: interaction.user.id,
+            name: interaction.user.username,
+            emailNormalizedHash: 'verified_via_guild_role',
+            jempId,
+            membershipStatus: MembershipState.ACTIVE,
+            createdAt: now,
+            updatedAt: now
+          };
+          await dbManager.saveMember(currentMember);
+          console.log(`[Discord Bot] Auto-synced established @Member ${interaction.user.tag} into database with ${jempId}`);
+        }
+      }
+
       const attachment = interaction.options.getAttachment('file', true);
 
       // Verify file extension

@@ -123,7 +123,7 @@ export async function verifyApplicationEmail(
   }
 
   // Create or retrieve member record
-  let member = existingMember;
+  let member = existingMember || (await dbManager.findMemberByDiscordId(discordUserId));
   const now = new Date().toISOString();
 
   if (!member) {
@@ -138,6 +138,9 @@ export async function verifyApplicationEmail(
       updatedAt: now
     };
   } else {
+    member.applicationId = app.id;
+    member.name = app.applicantName;
+    member.emailNormalizedHash = emailHash;
     member.discordUserId = discordUserId;
     member.membershipStatus = MembershipState.EMAIL_VERIFIED;
     member.updatedAt = now;
